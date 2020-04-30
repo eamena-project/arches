@@ -1,8 +1,9 @@
 define([
     'knockout',
     'underscore',
+    'viewmodels/alert',
     'bindings/scrollTo'
-], function(ko, _) {
+], function(ko, _, AlertViewModel) {
     return function(params) {
         var self = this;
         var getTiles = function(tile, tiles) {
@@ -16,10 +17,12 @@ define([
             return tiles;
         };
         this.configKeys = params.configKeys || [];
+        this.showIds = params.showIds || false;
         this.state = params.state || 'form';
         this.preview = params.preview;
         this.loading = params.loading || ko.observable(false);
         this.card = params.card;
+        this.card.showIds = this.showIds;
         this.tile = params.tile;
         this.reportExpanded = ko.observable(true);
         if (this.preview) {
@@ -73,5 +76,60 @@ define([
             }
             return tiles;
         }, this);
+        this.saveTile = function(callback) {
+            self.loading(true);
+            self.tile.save(function(response) {
+                self.loading(false);
+                params.pageVm.alert(
+                    new AlertViewModel(
+                        'ep-alert-red',
+                        response.responseJSON.title,
+                        response.responseJSON.message,
+                        null,
+                        function(){}
+                    )
+                );
+                if (params.form.onSaveError) {
+                    params.form.onSaveError(self.tile);
+                }
+            }, function() {
+                self.loading(false);
+                if (typeof self.onSaveSuccess === 'function') self.onSaveSuccess();
+                if (params.form.onSaveSuccess) {
+                    params.form.onSaveSuccess(self.tile);
+                }
+                if (typeof callback === 'function') callback();
+            });
+        };
+        this.saveTileAddNew = function() {
+            self.saveTile(function() {
+                window.setTimeout(function() {
+                    self.card.selected(true);
+                }, 1);
+            });
+        };
+        this.deleteTile = function() {
+            self.loading(true);
+            self.tile.deleteTile(function(response) {
+                self.loading(false);
+                params.pageVm.alert(
+                    new AlertViewModel(
+                        'ep-alert-red',
+                        response.responseJSON.title,
+                        response.responseJSON.message,
+                        null,
+                        function(){}
+                    )
+                );
+                if (params.form.onDeleteError) {
+                    params.form.onDeleteError(self.tile);
+                }
+            }, function() {
+                self.loading(false);
+                if (params.form.onDeleteSuccess) {
+                    params.form.onDeleteSuccess(self.tile);
+                }
+            });
+        };
     };
 });

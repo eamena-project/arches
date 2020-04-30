@@ -8,6 +8,7 @@ define([
         init: function(el, valueAccessor, allBindingsAccessor) {
             var allBindings = allBindingsAccessor().select2Query;
             var select2Config = ko.utils.unwrapObservable(allBindings.select2Config);
+            select2Config = Object.assign({}, select2Config);
             select2Config = _.defaults(select2Config, {
                 clickBubble: true,
                 multiple: false,
@@ -26,6 +27,9 @@ define([
                     $(el).select2("destroy").select2(select2Config);
                 });
                 select2Config.placeholder = select2Config.placeholder();
+                if (select2Config.allowClear) {
+                    select2Config.placeholder = select2Config.placeholder === "" ? " " : select2Config.placeholder;
+                }
             }
 
             select2Config.value = value();
