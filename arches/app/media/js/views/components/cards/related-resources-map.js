@@ -12,6 +12,7 @@ define([
 ], function($, arches, ko, koMapping, geojsonExtent, CardComponentViewModel, MapEditorViewModel, MapFilterViewModel, selectFeatureLayersFactory, popupTemplate) {
     var viewModel = function(params) {
         var self = this;
+
         this.widgets = [];
         params.configKeys = [
             'selectRelatedSource',
@@ -49,10 +50,12 @@ define([
         if (self.form && self.tile) self.card.widgets().forEach(function(widget) {
             var id = widget.node_id();
             var type = ko.unwrap(self.form.nodeLookup[id].datatype);
+
             if (type === 'resource-instance' || type === 'resource-instance-list' || type === 'geojson-feature-collection') {
                 self.widgets.push(widget);
             }
         });
+
         var getNodeIds = function(){
             var nodeids = [];
             if (self.selectRelatedSource()) {
@@ -69,6 +72,79 @@ define([
             }
             return nodeids;
         };
+
+        /* 
+            set/get logic to ensure all data values are equal between parent and children
+        */
+
+       this.basemap = ko.observable();
+       this.overlayConfigs = ko.observable();
+       this.centerX = ko.observable();
+       this.centerY = ko.observable();
+
+       for (var widget of self.widgets) {
+            if (widget.config.basemap) {
+               self.basemap(widget.config.basemap());
+            }
+            if (widget.config.overlayConfigs) {
+                self.overlayConfigs(widget.config.overlayConfigs());
+            }
+            if (widget.config.centerX) {
+                self.centerX(widget.config.centerX());
+            }
+            if (widget.config.centerY) {
+                self.centerY(widget.config.centerY());
+            }
+        }
+
+        this.basemap.subscribe(function(map) {
+            for (var widget of self.widgets) {
+                if (widget.config.basemap) {
+                    widget.config.basemap(map)
+                }
+            }
+        });
+        this.overlayConfigs.subscribe(function(configs) {
+            for (var widget of self.widgets) {
+                if (widget.config.overlayConfigs) {
+                    widget.config.overlayConfigs(configs)
+                }
+            }
+        });
+        this.centerX.subscribe(function(x) {
+            for (var widget of self.widgets) {
+                if (widget.config.centerX) {
+                    widget.config.centerX(x)
+                }
+            }
+        });
+        this.centerY.subscribe(function(y) {
+            for (var widget of self.widgets) {
+                if (widget.config.centerY) {
+                    widget.config.centerY(y)
+                }
+            }
+        });
+        
+        this.zoom = ko.observable(this.overviewzoom());
+        this.zoom.subscribe(function(zoom) {
+            self.config.overviewzoom(zoom);
+
+            for (var widget of self.widgets) {
+                if (widget.config.zoom) {
+                    widget.config.zoom(zoom)
+                }
+            }
+        });
+
+        /* end local set/get */ 
+        
+        params.basemap = this.basemap;
+        params.overlayConfigs = this.overlayConfigs;
+        params.x = this.centerX;
+        params.y = this.centerY;
+        params.zoom = this.zoom;
+        
         this.hoverId = ko.observable();
         this.nodeids = getNodeIds();
         this.nodeDetails = ko.observableArray();
@@ -85,7 +161,40 @@ define([
         var parsedNodeIds = JSON.parse(JSON.stringify(this.nodeids));
         var firstNode = parsedNodeIds.length > 0 ? [parsedNodeIds[0]] : [];
         this.filterNodeIds = ko.observableArray(firstNode);
+        this.relatedResourceDetails = {};
         this.relatedResourceWidgets = this.widgets.filter(function(widget){return widget.datatype.datatype === 'resource-instance' || widget.datatype.datatype === 'resource-instance-list';});
+        this.relatedResources = ko.pureComputed(function() {
+            var tileResourceIds = [];
+            self.relatedResourceWidgets.forEach(function(widget) {
+                var nodeid = ko.unwrap(widget.node_id);
+                var related = self.tile.data[nodeid]();
+                if (related) {
+                    self.tile.data[nodeid]().forEach(function(rr) {
+                        var resourceinstanceid = ko.unwrap(rr.resourceId);
+                        if (resourceinstanceid) {
+                            tileResourceIds.push(resourceinstanceid);
+                            if (!self.relatedResourceDetails[resourceinstanceid]) {
+                                window.fetch(arches.urls.search_results + "?id=" + resourceinstanceid)
+                                    .then(function(response) {
+                                        if (response.ok) {
+                                            return response.json();
+                                        }
+                                    })
+                                    .then(function(json) {
+                                        var details = json.results.hits.hits[0]._source
+                                        self.relatedResourceDetails[resourceinstanceid] = {graphid: details.graph_id, resourceinstanceid: resourceinstanceid, displayname: details.displayname};
+                                        self.tile.data[nodeid].valueHasMutated();
+                                    });
+                            }
+                        }
+                    });
+                }
+            });
+            return tileResourceIds
+                .map(function(resourceid){return self.relatedResourceDetails[resourceid]})
+                .filter(function(val){return val !== undefined});
+        });
+
         this.showRelatedQuery = ko.observable(false);
         var resourceBounds = ko.observable();
         var selectRelatedSource = this.selectRelatedSource();
@@ -101,6 +210,7 @@ define([
             });
             return ids;
         });
+
         var updateResourceBounds = function(ids) {
             if (ids.length > 0) {
                 $.getJSON({
@@ -115,6 +225,7 @@ define([
         };
         updateResourceBounds(selectedResourceIds());
         selectedResourceIds.subscribe(updateResourceBounds);
+
         var zoomToData = true;
         resourceBounds.subscribe(function(bounds) {
             var map = self.map();
@@ -137,8 +248,8 @@ define([
                 selectFeatureLayersFactory(source, sourceLayer, selectedResourceIds(), true, null, self.nodeids, self.filterNodeIds(), self.hoverId(), selectLayerConfig) :
                 [];
             self.additionalLayers(
-                extendedLayers.concat(
-                    selectFeatureLayers
+                selectFeatureLayers.concat(
+                    extendedLayers
                 )
             );
         };
@@ -167,6 +278,11 @@ define([
             var id = widget.node_id();
             var resourceinstanceid = ko.unwrap(resourceData.resourceinstanceid);
             var type = ko.unwrap(self.form.nodeLookup[id].datatype);
+            self.relatedResourceDetails[ko.unwrap(resourceData.resourceinstanceid)] = {
+                graphid: ko.unwrap(resourceData.graphid),
+                displayname: ko.unwrap(resourceData.displayname),
+                resourceinstanceid: ko.unwrap(resourceData.resourceinstanceid)
+            }
             zoomToData = false;
             var graphconfig = widget.node.config.graphs().find(function(graph){return graph.graphid === ko.unwrap(resourceData.graphid);});
             var val = [{
@@ -187,6 +303,7 @@ define([
                 }
             }
         };
+
 
         this.unrelateResource = function(resourceData, widget) {
             var id = widget.node_id();
@@ -212,23 +329,12 @@ define([
             searchContext: self.showRelatedQuery
         });
 
-        this.intersectionSummary = ko.observable({});
         this.updateHoverId = function(val){
             self.hoverId() === val.resourceinstanceid ? self.hoverId(null) : self.hoverId(val.resourceinstanceid);
         };
-        this.targetGraphs = ko.observableArray();
         this.mapFilter.filter.feature_collection.subscribe(function(val){
             if (self.widget && self.widget.node.config.graphs().length && val.features && val.features.length > 0) {
-                self.targetGraphs.removeAll();
                 var graphs = self.widget.node.config.graphs().map(function(v){if (v.graphid){return v.graphid;}});
-                self.targetGraphs(graphs);
-                graphs.forEach(function(val){
-                    if (!self.intersectionSummary()[val]) {
-                        var resource = arches.resources.find(function(resource){return resource.graphid === val;});
-                        self.intersectionSummary()[val] = resource;
-                        self.intersectionSummary()[val].results = ko.observableArray([]);
-                    }
-                }, this);
                 var payload = {
                     "map-filter": JSON.stringify(val),
                     "precision": 6,
@@ -244,9 +350,6 @@ define([
                     data: payload,
                     method: 'GET'
                 }).done(function(data){
-                    graphs.forEach(function(graph){
-                        self.intersectionSummary()[graph].results.removeAll();
-                    });
                     self.relatedResourceWidgets.forEach(function(widget) {
                         if (ko.unwrap(self.tile.data[widget.node.nodeid])) {
                             self.tile.data[widget.node.nodeid]([]);
@@ -256,12 +359,10 @@ define([
                         var resourceInstance = hit._source;
                         if (graphs.indexOf(resourceInstance.graph_id) > -1) {
                             self.relateResource(
-                                {resourceinstanceid: resourceInstance.resourceinstanceid, graphid: resourceInstance.graph_id},
+                                {resourceinstanceid: resourceInstance.resourceinstanceid, graphid: resourceInstance.graph_id, displayname: resourceInstance.displayname},
                                 self.widget);
                         }
-                        self.intersectionSummary()[resourceInstance.graph_id].results.push(resourceInstance);
                     });
-                    self.intersectionSummary.valueHasMutated();
                     var buffer = data['map-filter'].search_buffer;
                     self.map().getSource('geojson-search-buffer-data').setData(buffer);
                 });
@@ -290,9 +391,20 @@ define([
                     self.map().addLayer(layer);
                     extendedLayers.push(layer);
                 });
+                self.map().on('mousemove', (e) => {
+                    var features = self.map().queryRenderedFeatures(e.point);
+                    var feature;
+                    if (features.length && features[0].properties.resourceinstanceid) {
+                        feature = features[0].properties.resourceinstanceid;
+                        if (self.relatedResources().filter(function(val){return val.resourceinstanceid === feature}).length) {
+                            self.hoverId(feature);
+                        }
+                    } else {
+                        self.hoverId(null);
+                    }
+                });
             }
         });
-
     };
     ko.components.register('related-resources-map-card', {
         viewModel: viewModel,
