@@ -1,39 +1,73 @@
-define([], function() {
-    return function loadComponentDependencies(componentPaths){
-        for (const componentPath of componentPaths) {
-            try {  // first try to load project path
-                // eslint-disable-next-line no-undef
-                require(`${APP_ROOT_DIRECTORY}/media/js/${componentPath}`);
+export async function loadComponentDependencies(componentPaths) {
+    for (const componentPath of componentPaths) {
+        let componentLoaded = false;
+
+        for (const archesApp of ARCHES_APPLICATIONS) {
+            try {
+                require(`${SITE_PACKAGES_DIRECTORY}/${archesApp}/media/js/${componentPath}`);
+                componentLoaded = true;
+                break;
             }
-            catch(e) {  // if project path fails, load arches-core path
-                try { 
-                    // eslint-disable-next-line no-undef
-                    require(`${ARCHES_CORE_DIRECTORY}/app/media/js/${componentPath}`);
+            catch (e) {
+                try {
+                    require(`${LINKED_APPLICATION_PATH_0}/media/js/${componentPath}`);
+                    componentLoaded = true;
+                    break;
                 }
-                catch(e) {  // if arches-core path fails, look in each arches application for path
-                    // eslint-disable-next-line no-undef
-                    for (const archesApp of ARCHES_APPLICATIONS) {
-                        // eslint-disable-next-line no-undef
+                catch {
+                    try {
+                        require(`${LINKED_APPLICATION_PATH_1}/media/js/${componentPath}`);
+                        componentLoaded = true;
+                        break;
+                    }
+                    catch {
                         try {
-                            require(`${SITE_PACKAGES_DIRECTORY}/${archesApp}/media/js/${componentPath}`);
+                            require(`${LINKED_APPLICATION_PATH_2}/media/js/${componentPath}`);
+                            componentLoaded = true;
                             break;
                         }
-                        catch(e) { // handles egg/wheel links, cannot access them programatically hence manual access
+                        catch {
                             try {
-                                require(`${LINKED_APPLICATION_PATH_0}/media/js/${componentPath}`);
+                                require(`${LINKED_APPLICATION_PATH_3}/media/js/${componentPath}`);
+                                componentLoaded = true;
                                 break;
                             }
-                            catch {  // handles egg/wheel links, cannot access them programatically hence manual access
+                            catch {
                                 try {
-                                    require(`${LINKED_APPLICATION_PATH_1}/media/js/${componentPath}`);
+                                    require(`${LINKED_APPLICATION_PATH_4}/media/js/${componentPath}`);
+                                    componentLoaded = true;
                                     break;
                                 }
-                                catch { // handles egg/wheel links, cannot access them programatically hence manual access
+                                catch {
                                     try {
-                                        require(`${LINKED_APPLICATION_PATH_2}/media/js/${componentPath}`);
+                                        require(`${LINKED_APPLICATION_PATH_5}/media/js/${componentPath}`);
+                                        componentLoaded = true;
                                         break;
                                     }
-                                    catch {}
+                                    catch {
+                                        try {
+                                            require(`${LINKED_APPLICATION_PATH_6}/media/js/${componentPath}`);
+                                            componentLoaded = true;
+                                            break;
+                                        }
+                                        catch {
+                                            try {
+                                                require(`${LINKED_APPLICATION_PATH_7}/media/js/${componentPath}`);
+                                                componentLoaded = true;
+                                                break;
+                                            }
+                                            catch {
+                                                try {
+                                                    require(`${LINKED_APPLICATION_PATH_8}/media/js/${componentPath}`);
+                                                    componentLoaded = true;
+                                                    break;
+                                                }
+                                                catch {
+                                                    // Component not found in linked paths, continue to next archesApp
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -41,5 +75,14 @@ define([], function() {
                 }
             }
         }
-    };
-});
+
+        if (!componentLoaded) { // Finally, look in Arches core for the component
+            try {
+                require(`${ARCHES_CORE_DIRECTORY}/app/media/js/${componentPath}`);
+            }
+            catch (e) {
+                console.error(`Component "${componentPath}" not found in any application or in Arches core.`);
+            }
+        }
+    }
+}

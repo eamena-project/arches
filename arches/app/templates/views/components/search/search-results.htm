@@ -2,9 +2,7 @@
 {% load template_tags %}
 {% load i18n %}
 
-<div id="search-results-list" style="display: none;" role="list" tabindex="-1" data-bind="foreach: results, visible: true,
-    attr: {'aria-label': $root.translations.searchResults}
-">
+<div id="search-results-list" data-bind="foreach: results, visible: true" style="display: none;">
 
     <div class="search-listing" role="listitem" data-bind="event: { mouseover: mouseoverInstance, mouseout: mouseoverInstance('')}, css: {'selected': selected()}">
         <div style="display: flex">
@@ -27,12 +25,12 @@
             <div style="flex: 1">
                 <p 
                     class="search-listing-title" 
-                    data-bind="css: {'i18n-alt': $parent.alternativelanguage}"
+                    data-bind="css: {'i18n-alt': $parent.alternativelanguage, 'principal-user': isPrincipal}"
                 >
-                    <a class="search-candidate-title" href="#" data-bind="onEnterkeyClick, onSpaceClick, click: $parent.viewReport.bind($parent),
-                        attr: {'aria-label': $root.translations.viewResourceReport(displayname)},
-                    ">
-                        <i class="search-listing-icon" data-bind="css: iconclass"></i> 
+                    <a class="search-candidate-title"
+                        data-bind="attr: { href: reportUrl, 'aria-label': $root.translations.viewResourceReport(displayname) },
+                                click: $parent.viewReport.bind($parent), onEnterkeyClick, onSpaceClick">
+                        <i class="search-listing-icon" data-bind="css: iconclass"></i>
                         <span data-bind="text: displayname"></span>
                     </a>
                 </p>
@@ -67,9 +65,9 @@
                 </button>
                 <!-- /ko -->
 
-                <!--ko if: canEdit -->
-                <a class="search-candidate-link" href="#" data-bind="onEnterkeyClick, onSpaceClick, click: $parent.editResource.bind($parent),
-                    attr: {'aria-label': $root.translations.editResource(displayname)},
+                <!--ko if: canEdit || isPrincipal -->
+                <a class="search-candidate-link" data-bind="onEnterkeyClick, onSpaceClick, click: $parent.editResource.bind($parent),
+                attr: {href: editUrl, 'aria-label': $root.translations.editResource(displayname)},
                 ">
                     <i class="ion-ios-refresh-empty"></i>
                     <span data-bind="text: $root.translations.edit"></span>

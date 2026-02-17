@@ -35,9 +35,23 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("operation", nargs="?")
 
-        parser.add_argument("-s", "--source", action="store", dest="dt_source", default="", help="Datatype file to be loaded")
+        parser.add_argument(
+            "-s",
+            "--source",
+            action="store",
+            dest="dt_source",
+            default="",
+            help="Datatype file to be loaded",
+        )
 
-        parser.add_argument("-d", "--datatype", action="store", dest="datatype", default="", help="The name of the datatype to unregister")
+        parser.add_argument(
+            "-d",
+            "--datatype",
+            action="store",
+            dest="datatype",
+            default="",
+            help="The name of the datatype to unregister",
+        )
 
     def handle(self, *args, **options):
         if options["operation"] == "register":
@@ -58,7 +72,15 @@ class Command(BaseCommand):
 
         """
         utils.load_source("dt_source", source)
-        details = sys.modules["dt_source"].details
+        try:
+            details = sys.modules["dt_source"].details
+        except AttributeError:
+            sys.stderr.write(
+                "Datatype details not found in {0}, skipping datatype registration.".format(
+                    source
+                )
+            )
+            return
         self.validate_details(details)
 
         dt = models.DDataType(

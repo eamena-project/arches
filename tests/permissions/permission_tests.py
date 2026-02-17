@@ -13,86 +13,39 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
-"""
-This file demonstrates writing tests using the unittest module. These will pass
-when you run "manage.py test".
-Replace this with more appropriate tests for your application.
-"""
-
-import os
-import json
-from tests import test_settings
-from tests.base_test import ArchesTestCase
-from django.core import management
-from django.urls import reverse
-from django.test.client import RequestFactory, Client
-from arches.app.utils.betterJSONSerializer import JSONSerializer, JSONDeserializer
 from django.contrib.auth.models import User
 from django.contrib.auth.models import Group
-from guardian.shortcuts import assign_perm, get_perms, remove_perm, get_group_perms, get_user_perms
-from arches.app.models.models import ResourceInstance, Node
+from guardian.shortcuts import assign_perm
+from arches.app.models.models import Node, NodeGroup
 from arches.app.models.resource import Resource
-from arches.app.utils.permission_backend import get_editable_resource_types
-from arches.app.utils.permission_backend import get_resource_types_by_perm
+from arches.app.search.components.resource_type_filter import get_permitted_graphids
 from arches.app.utils.permission_backend import user_can_read_resource
-from arches.app.utils.permission_backend import user_can_edit_resource
-from arches.app.utils.permission_backend import user_can_read_concepts
 from arches.app.utils.permission_backend import user_has_resource_model_permissions
 from arches.app.utils.permission_backend import get_restricted_users
+from arches.app.utils.permission_backend import get_nodegroups_by_perm
+
+from tests.base_test import ArchesTestCase
 
 # these tests can be run from the command line via
-# python manage.py test tests/permissions/permission_tests.py --pattern="*.py" --settings="tests.test_settings"
+# python manage.py test tests.permissions.permission_tests --settings="tests.test_settings"
 
 
 class PermissionTests(ArchesTestCase):
-    def setUp(self):
-        self.expected_resource_count = 2
-        self.client = Client()
-        self.data_type_graphid = "330802c5-95bd-11e8-b7ac-acde48001122"
-        self.resource_instance_id = "f562c2fa-48d3-4798-a723-10209806c068"
-        self.user = User.objects.get(username="ben")
-        self.group = Group.objects.get(pk=2)
-        resource = Resource.objects.get(pk=self.resource_instance_id)
-        resource.graph_id = self.data_type_graphid
-        resource.remove_resource_instance_permissions()
-
-    def tearDown(self):
-        ResourceInstance.objects.filter(graph_id=self.data_type_graphid).delete()
+    graph_fixtures = ["Data_Type_Model"]
+    data_type_graphid = "330802c5-95bd-11e8-b7ac-acde48001122"
+    resource_instance_id = "f562c2fa-48d3-4798-a723-10209806c068"
 
     @classmethod
-    def add_users(cls):
-        profiles = (
-            {"name": "ben", "email": "ben@test.com", "password": "Test12345!", "groups": ["Graph Editor", "Resource Editor"]},
-            {
-                "name": "sam",
-                "email": "sam@test.com",
-                "password": "Test12345!",
-                "groups": ["Graph Editor", "Resource Editor", "Resource Reviewer"],
-            },
-            {"name": "jim", "email": "jim@test.com", "password": "Test12345!", "groups": ["Graph Editor", "Resource Editor"]},
-        )
-
-        for profile in profiles:
-            try:
-                user = User.objects.create_user(username=profile["name"], email=profile["email"], password=profile["password"])
-                user.save()
-                print(("Added: {0}, password: {1}".format(user.username, user.password)))
-
-                for group_name in profile["groups"]:
-                    group = Group.objects.get(name=group_name)
-                    group.user_set.add(user)
-
-            except Exception as e:
-                print(e)
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-
-        test_pkg_path = os.path.join(test_settings.TEST_ROOT, "fixtures", "testing_prj", "testing_prj", "pkg")
-        management.call_command("packages", operation="load_package", source=test_pkg_path, yes=True)
+    def setUpTestData(cls):
+        super().setUpTestData()
         cls.add_users()
-
+        cls.expected_resource_count = 2
+        cls.user = cls.test_users["ben"]
+        cls.group = Group.objects.get(pk=2)
+        cls.legacy_load_testing_package()
+        cls.resource = Resource.objects.get(pk=cls.resource_instance_id)
+        cls.resource.graph_id = cls.data_type_graphid
+        cls.resource.remove_resource_instance_permissions()
 
     def test_user_cannot_view_without_permission(self):
         """
@@ -100,55 +53,162 @@ class PermissionTests(ArchesTestCase):
         not without explicit permission if a permission other than 'view_resourceinstance' is assigned.
         """
 
-        implicit_permission = user_can_read_resource(self.user, self.resource_instance_id)
-        resource = ResourceInstance.objects.get(resourceinstanceid=self.resource_instance_id)
-        assign_perm("change_resourceinstance", self.group, resource)
-        can_access_without_view_permission = user_can_read_resource(self.user, self.resource_instance_id)
-        assign_perm("view_resourceinstance", self.group, resource)
-        can_access_with_view_permission = user_can_read_resource(self.user, self.resource_instance_id)
-        self.assertTrue(
-            implicit_permission is True and can_access_without_view_permission is False and can_access_with_view_permission is True
+        implicit_permission = user_can_read_resource(
+            self.user, self.resource_instance_id
         )
+        assign_perm("change_resourceinstance", self.group, self.resource)
+        can_access_without_view_permission = user_can_read_resource(
+            self.user, self.resource_instance_id
+        )
+        assign_perm("view_resourceinstance", self.group, self.resource)
+        can_access_with_view_permission = user_can_read_resource(
+            self.user, self.resource_instance_id
+        )
+        self.assertTrue(implicit_permission)
+        self.assertFalse(can_access_without_view_permission)
+        self.assertTrue(can_access_with_view_permission)
 
     def test_user_has_resource_model_permissions(self):
         """
         Tests that a user cannot access an instance if they have no access to any nodegroup.
-        
+
         """
 
-        resource = ResourceInstance.objects.get(resourceinstanceid=self.resource_instance_id)
-        nodes = Node.objects.filter(graph_id=resource.graph_id)
+        nodes = (
+            Node.objects.filter(graph_id=self.resource.graph_id)
+            .exclude(nodegroup__isnull=True)
+            .select_related("nodegroup")
+        )
         for node in nodes:
-            if node.nodegroup:
-                assign_perm("no_access_to_nodegroup", self.group, node.nodegroup)
-        hasperms = user_has_resource_model_permissions(self.user, ["models.read_nodegroup"], resource)
-        self.assertTrue(hasperms is False)
+            assign_perm("no_access_to_nodegroup", self.group, node.nodegroup)
+        hasperms = user_has_resource_model_permissions(
+            self.user, ["models.read_nodegroup"], self.resource
+        )
+        self.assertFalse(hasperms)
 
     def test_get_restricted_users(self):
         """
         Tests that users are properly identified as restricted.
         """
-
-        resource = ResourceInstance.objects.get(resourceinstanceid=self.resource_instance_id)
-        assign_perm("no_access_to_resourceinstance", self.group, resource)
+        assign_perm("no_access_to_resourceinstance", self.group, self.resource)
         ben = self.user
-        jim = User.objects.get(username="jim")
-        sam = User.objects.get(username="sam")
-        admin = User.objects.get(username="admin")
-        assign_perm("view_resourceinstance", ben, resource)
-        assign_perm("change_resourceinstance", jim, resource)
+        jim = self.test_users["jim"]
+        sam = self.test_users["sam"]
+        admin = self.test_users["admin"]
+        assign_perm("view_resourceinstance", ben, self.resource)
+        assign_perm("change_resourceinstance", jim, self.resource)
 
-        restrictions = get_restricted_users(resource)
+        restrictions = get_restricted_users(self.resource)
 
         results = [
-            jim.id in restrictions["cannot_read"],
-            ben.id in restrictions["cannot_write"],
-            sam.id in restrictions["cannot_delete"],
-            sam.id in restrictions["no_access"],
-            admin.id not in restrictions["cannot_read"],
-            admin.id not in restrictions["cannot_write"],
-            admin.id not in restrictions["cannot_delete"],
-            admin.id not in restrictions["no_access"],
+            ("jim", "cannot_read", jim.id in restrictions["cannot_read"]),
+            ("ben", "cannot_write", ben.id in restrictions["cannot_write"]),
+            ("sam", "cannot_delete", sam.id in restrictions["cannot_delete"]),
+            ("sam", "no_access", sam.id in restrictions["no_access"]),
+            (
+                "admin",
+                "not in cannot_read",
+                admin.id not in restrictions["cannot_read"],
+            ),
+            (
+                "admin",
+                "not in cannot_write",
+                admin.id not in restrictions["cannot_write"],
+            ),
+            (
+                "admin",
+                "not in cannot_delete",
+                admin.id not in restrictions["cannot_delete"],
+            ),
+            ("admin", "not in no_access", admin.id not in restrictions["no_access"]),
         ]
 
-        self.assertTrue(all(results) is True)
+        for result in results:
+            with self.subTest(user=result[0], restriction=result[1]):
+                self.assertTrue(result[2])
+
+    def test_get_permitted_graphids(self):
+        """
+        Tests if a user has access to a resource model based on nodegroup access
+
+        """
+
+        nodegroups = NodeGroup.objects.filter(
+            node__graph_id=self.data_type_graphid
+        ).distinct()
+        permitted_nodegroups = get_nodegroups_by_perm(
+            self.user, "models.read_nodegroup"
+        )
+        graphids = get_permitted_graphids(permitted_nodegroups)
+        with self.subTest(graphids):
+            self.assertTrue(self.data_type_graphid in graphids)
+
+        for nodegroup in nodegroups:
+            assign_perm("no_access_to_nodegroup", self.user, nodegroup)
+
+        permitted_nodegroups = get_nodegroups_by_perm(
+            self.user, "models.read_nodegroup"
+        )
+        graphids = get_permitted_graphids(permitted_nodegroups)
+        with self.subTest(graphids):
+            self.assertTrue(self.data_type_graphid not in graphids)
+
+    def test_nodegroups_by_perm(self):
+        # In this first case, user 'ben' has implicit read access to all nodegroups
+        nodegroup_set = get_nodegroups_by_perm(self.user, "models.read_nodegroup")
+        self.assertTrue(nodegroup_set)
+
+        # For the case of edit and delete, access should succeed because implicitly users have all read, write, and delete
+        nodegroup_set = get_nodegroups_by_perm(self.user, "models.delete_nodegroup")
+        self.assertTrue(nodegroup_set)
+        nodegroup_set = get_nodegroups_by_perm(self.user, "models.write_nodegroup")
+        self.assertTrue(nodegroup_set)
+
+        # If multiple perms, if any_perm is true, user should have access to node
+        nodegroup_set = get_nodegroups_by_perm(
+            self.user, ["models.read_nodegroup", "models.delete_nodegroup"]
+        )
+        self.assertTrue(nodegroup_set)
+        nodegroup_set = get_nodegroups_by_perm(
+            self.user, ["models.read_nodegroup", "models.delete_nodegroup"], False
+        )
+        self.assertTrue(nodegroup_set)
+
+        nodegroups = NodeGroup.objects.filter(
+            node__graph_id=self.data_type_graphid
+        ).distinct()
+
+        # Give user 'ben' explicit delete permission on one nodegroup - verify that group is returned
+        first_nodegroup = nodegroups.first()
+        assign_perm("models.delete_nodegroup", self.user, first_nodegroup)
+        nodegroup_set = get_nodegroups_by_perm(
+            self.user, ["models.read_nodegroup", "models.delete_nodegroup"], True
+        )
+        self.assertTrue(nodegroup_set)
+
+        # If all permissions are required, this is OK as long as the user is logged in
+        nodegroup_set = get_nodegroups_by_perm(
+            self.user, ["models.read_nodegroup", "models.delete_nodegroup"], False
+        )
+        self.assertTrue(nodegroup_set)
+
+        anonymous_user = User.objects.get(username="anonymous")
+        # Anonymous user should be able to read by default, but not delete or edit
+        nodegroup_set = get_nodegroups_by_perm(
+            anonymous_user,
+            [
+                "models.read_nodegroup",
+            ],
+        )
+
+        self.assertTrue(nodegroup_set)
+
+        nodegroup_set = get_nodegroups_by_perm(
+            anonymous_user, ["models.read_nodegroup", "models.delete_nodegroup"], False
+        )
+        self.assertFalse(nodegroup_set)
+
+        nodegroup_set = get_nodegroups_by_perm(
+            anonymous_user, ["models.read_nodegroup", "models.write_nodegroup"], False
+        )
+        self.assertFalse(nodegroup_set)

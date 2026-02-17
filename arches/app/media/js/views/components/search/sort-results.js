@@ -1,54 +1,75 @@
-define([
-    'jquery',
-    'underscore',
-    'views/components/search/base-filter',
-    'knockout',
-    'templates/views/components/search/sort-results.htm',
-    'chosen',
-], function($, _, BaseFilter, ko, sortResultsTemplate) {
-    var componentName = 'sort-results';
-    const viewModel = BaseFilter.extend({
-        initialize: function(options) {
-            options.name = 'Sort Results';
+import $ from 'jquery';
+import _ from 'underscore';
+import ko from 'knockout';
+import BaseFilter from 'views/components/search/base-filter';
+import sortResultsTemplate from 'templates/views/components/search/sort-results.htm';
+import 'chosen';
 
-             
-            BaseFilter.prototype.initialize.call(this, options);
 
-            this.filter = ko.observable('');
-            this.filters[componentName](this);
-            
-            this.filter.subscribe(function(){
-                this.updateQuery();
-            }, this);
+var componentName = 'sort-results';
+const viewModel = BaseFilter.extend({
+    initialize: function(options) {
+        options.name = 'Sort Results';
+        BaseFilter.prototype.initialize.call(this, options);
 
-            this.restoreState();
-        },
+        this.sortBy = ko.observable('');
+        this.sortOrder = ko.observable('asc');
 
-        updateQuery: function() {
-            var queryObj = this.query();
-            if(this.filter() === '') {
-                delete queryObj[componentName];
-            } else {
-                queryObj[componentName] = this.filter();
-            }
-            this.query(queryObj);
-        },
+        this.sortSymbol=ko.computed(function() {
+            return this.sortOrder() === "asc" ? 
+                '<i class="fa fa-sort-amount-asc fa-lg"></i>' :  
+                '<i class="fa fa-sort-amount-desc fa-lg"></i>'
+        }, this);
 
-        restoreState: function(){
-            var query = this.query();
-            if (componentName in query) {
-                this.filter(query[componentName]);
-            }
-        },
+        this.searchFilterVms[componentName](this);
 
-        clear: function(){
-            this.filter('');
+        this.sortBy.subscribe(function(){
+            this.updateQuery();
+        }, this);
+
+        this.sortOrder.subscribe(function(){
+            this.updateQuery();
+        }, this);
+
+        this.restoreState();
+    },
+
+    updateQuery: function() {
+        var queryObj = this.query();
+        if(this.sortBy() === '') {
+            delete queryObj['sort-by'];
+        } else {
+            queryObj['sort-by'] = this.sortBy();
         }
-        
-    });
 
-    return ko.components.register(componentName, {
-        viewModel: viewModel,
-        template: sortResultsTemplate,
-    });
+        if(this.sortOrder() === '' | this.sortBy() === '') {
+            delete queryObj['sort-order'];
+        } else {
+            queryObj['sort-order'] = this.sortOrder();
+        }
+                
+        this.query(queryObj);
+    },
+
+    restoreState: function(){
+        var query = this.query();
+        if ('sort-by' in query) {
+            this.sortBy(query['sort-by']);
+        }
+
+        if ('sort-order' in query) {
+            this.sortOrder(query['sort-order']);
+        }
+    },
+
+    clear: function(){
+        this.sortBy('');
+        this.sortOrder('')
+    }
+
+});
+
+export default ko.components.register(componentName, {
+    viewModel: viewModel,
+    template: sortResultsTemplate,
 });

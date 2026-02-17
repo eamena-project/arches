@@ -1,14 +1,16 @@
 import arches
+
 import os
 import shutil
 
-from django.core.management.base import BaseCommand
 from django.core import management
-from django.db import connection
+from django.core.management.base import BaseCommand
+from arches.app.models.system_settings import settings
+
 from arches.app.models.system_settings import settings
 
 
-class Command(BaseCommand):
+class Command(BaseCommand):  # pragma: no cover
     """
     Command for migrating projects between versions
 
@@ -16,95 +18,273 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         answer = input(
-        """
-        This will replace the following files in your project:
-        .babelrc, eslintrc.js, .eslintignore, .browserslistrc, .stylelintrc.json, 
-        nodemon.json and tsconfig.json, and the entire webpack directory.
-        
-        Continue?
-        """
+            "This operation will upgrade your project to version 8.0\n"
+            "This will replace the following files in your project:\n"
+            "  - <project>/apps.py\n"
+            "  - .github/actions/build-and-test-branch/action.yml\n"
+            "  - .github/dependabot.yml\n"
+            "  - .github/workflows/main.yml\n"
+            "  - eslint.config.mjs\n"
+            "  - tsconfig.json\n"
+            "  - vitest.config.mts\n"
+            "  - webpack/webpack-utils/build-filepath-lookup.js\n"
+            "  - webpack/webpack.common.js\n"
+            "  - webpack/webpack.config.dev.js\n"
+            "  - webpack/webpack.config.prod.js\n"
+            "Continue? "
         )
-        
-        if answer.lower() in ["y","yes"]:
-            self.update_to_v7()
-            self.update_to_v7_5()
-            self.update_to_v7_6()
+
+        if answer.lower() in ["y", "yes"]:
+            self.update_to_v8()
+            self.update_to_v8_1()
         else:
-            print("Operation aborted.")
+            self.stdout.write("Operation aborted.")
 
-    def update_to_v7(self):
-        # copy webpack config files to project
-        print("Copying webpack directory to project root directory")
-        project_webpack_path = os.path.join(settings.APP_ROOT, "webpack")
+    def update_to_v8_1(self):
+        self.stdout.write("Updating project to version 8.1...")
 
-        if os.path.exists(project_webpack_path):
-            shutil.rmtree(project_webpack_path)
+        # Replaces eslint.config.mjs
+        self.stdout.write("Updating eslint.config.mjs...")
 
-        shutil.copytree(os.path.join(settings.ROOT_DIR, "install", "arches-templates", "project_name", "webpack"), project_webpack_path)
+        if os.path.exists(os.path.join(settings.APP_ROOT, "..", "eslint.config.mjs")):
+            os.remove(os.path.join(settings.APP_ROOT, "..", "eslint.config.mjs"))
 
-        # copy dotfiles
-        for dotfile in [".eslintrc.js", ".eslintignore", ".babelrc", ".browserslistrc", ".stylelintrc.json"]:
-            print("Copying {} to project root directory".format(dotfile))
-            shutil.copy2(os.path.join(settings.ROOT_DIR, "install", "arches-templates", "project_name", dotfile), settings.APP_ROOT)
+        shutil.copy2(
+            os.path.join(
+                settings.ROOT_DIR, "install", "arches-templates", "eslint.config.mjs"
+            ),
+            os.path.join(settings.APP_ROOT, "..", "eslint.config.mjs"),
+        )
+        self.stdout.write("Done!")
+        self.stdout.write("Project successfully updated to version 8.1")
 
-        # ensure project has a `media/img` directory
-        if not os.path.isdir(os.path.join(settings.APP_ROOT, "media", "img")):
-            print("Creating /media/img directory")
-            os.mkdir(os.path.join(settings.APP_ROOT, "media", "img"))
+    def update_to_v8(self):
+        self.stdout.write("Updating project to version 8.0...")
 
-        #  check if temp_graph_status table exists
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT EXISTS (
-                    SELECT FROM 
-                        pg_tables
-                    WHERE 
-                        schemaname = 'public' AND 
-                        tablename  = 'temp_graph_status'
-                );
-                """
+        # Removes:
+        #   `.frontend-configuration-settings.json`
+        #   `.tsconfig-paths.json`
+        #   `declarations.test.ts`
+        for file_to_delete in [
+            ".frontend-configuration-settings.json",
+            ".tsconfig-paths.json",
+        ]:
+            if os.path.exists(os.path.join(settings.APP_ROOT, "..", file_to_delete)):
+                self.stdout.write("Deleting {}".format(file_to_delete))
+                os.remove(os.path.join(settings.APP_ROOT, "..", file_to_delete))
+                self.stdout.write("Done!")
+
+        declarations_test_file_path = os.path.join(
+            settings.APP_ROOT, "src", settings.APP_NAME, "declarations.test.ts"
+        )
+
+        if os.path.exists(declarations_test_file_path):
+            self.stdout.write("Deleting {}".format("declarations.test.ts"))
+            os.remove(declarations_test_file_path)
+            self.stdout.write("Done!")
+
+        # Update apps.py to remove generate_frontend_configuration
+        to_replace_1 = """
+from django.conf import settings
+
+from arches.settings_utils import generate_frontend_configuration"""
+
+        to_replace_2 = """
+    def ready(self):
+        if settings.APP_NAME.lower() == self.name:
+            generate_frontend_configuration()"""
+
+        with open(
+            os.path.join(settings.APP_ROOT, "apps.py"), "r", encoding="utf-8"
+        ) as f:
+            apps_file_content = f.read()
+        with open(
+            os.path.join(settings.APP_ROOT, "apps.py"), "w", encoding="utf-8"
+        ) as f:
+            new_content = apps_file_content.replace(to_replace_1, "").replace(
+                to_replace_2, ""
             )
-            result = cursor.fetchone()
+            f.write(new_content)
 
-            # publish graphs that were previously active
-            if result[0]:  # parses result from row
-                cursor.execute("select * from temp_graph_status;")
-                rows = cursor.fetchall()
-                graphs = []
-                for row in rows:
-                    graphid = str(row[0])
-                    active = row[1]
-                    if active:
-                        graphs.append(graphid)
-                management.call_command("graph", operation="publish", update_instances=True, graphs=",".join(graphs))
-                cursor.execute("drop table if exists temp_graph_status")
+        # Updates webpack config files
+        if os.path.isdir(os.path.join(settings.APP_ROOT, "..", "webpack")):
+            self.stdout.write("Removing previous webpack directory...")
+            shutil.rmtree(
+                os.path.join(settings.APP_ROOT, "..", "webpack"), ignore_errors=True
+            )
+            self.stdout.write("Done!")
 
-    def update_to_v7_5(self):
-        # Republish to pick up CardsXNodeXWidget changes from
-        # migration 10150_add_default_value_file_list.py
-        management.call_command("graph", operation="publish", update=True)
+        self.stdout.write("Creating updated webpack directory at project root...")
+        shutil.copytree(
+            os.path.join(settings.ROOT_DIR, "install", "arches-templates", "webpack"),
+            os.path.join(settings.APP_ROOT, "..", "webpack"),
+        )
 
-    def update_to_v7_6(self):
-        # ensure project has a `messages.pot` file
-        for dotfile in ["nodemon.json", "tsconfig.json"]:
-            print("Copying {} to project root directory".format(dotfile))
-            shutil.copy2(os.path.join(settings.ROOT_DIR, "install", "arches-templates", "project_name", dotfile), settings.APP_ROOT)
-    
-        if not os.path.isfile(os.path.join(settings.APP_ROOT, "src", "declarations.d.ts")):
-            print("Creating /src/declarations.d.ts")
-            if not os.path.isdir(os.path.join(settings.APP_ROOT, "src")):
-                os.mkdir(os.path.join(settings.APP_ROOT, "src"))
+        # Replaces tsconfig.json
+        self.stdout.write("Updating tsconfig.json...")
 
-            shutil.copy2(os.path.join(settings.ROOT_DIR, "install", "arches-templates", "project_name", "src", "declarations.d.ts"), os.path.join(settings.APP_ROOT, 'src'))
+        if os.path.exists(os.path.join(settings.APP_ROOT, "..", "tsconfig.json")):
+            os.remove(os.path.join(settings.APP_ROOT, "..", "tsconfig.json"))
 
-        if not os.path.isfile(os.path.join(settings.APP_ROOT, "locale", "messages.pot")):
-            print("Creating /locale/messages.pot")
-            if not os.path.isdir(os.path.join(settings.APP_ROOT, "locale")):
-                os.mkdir(os.path.join(settings.APP_ROOT, "locale"))
+        shutil.copy2(
+            os.path.join(
+                settings.ROOT_DIR, "install", "arches-templates", "tsconfig.json"
+            ),
+            os.path.join(settings.APP_ROOT, "..", "tsconfig.json"),
+        )
+        self.stdout.write("Done!")
 
-            open(os.path.join(settings.APP_ROOT, "locale", "messages.pot"), 'w').close()
+        # Replaces vitest.config.mts
+        self.stdout.write("Updating vitest.config.mts...")
 
-        if not os.path.isfile(os.path.join(settings.APP_ROOT, "gettext.config.js")):
-            print("Copying gettext config to project root directory")
-            shutil.copy2(os.path.join(settings.ROOT_DIR, "install", "arches-templates", "project_name", "gettext.config.js"), settings.APP_ROOT)
+        if os.path.exists(os.path.join(settings.APP_ROOT, "..", "vitest.config.mts")):
+            os.remove(os.path.join(settings.APP_ROOT, "..", "vitest.config.mts"))
+
+        shutil.copy2(
+            os.path.join(
+                settings.ROOT_DIR, "install", "arches-templates", "vitest.config.mts"
+            ),
+            os.path.join(settings.APP_ROOT, "..", "vitest.config.mts"),
+        )
+        self.stdout.write("Done!")
+
+        # Adds .github/dependabot.yml
+        self.stdout.write("Copying .github/dependabot.yml to project...")
+        shutil.copy(
+            os.path.join(
+                settings.ROOT_DIR,
+                "install",
+                "arches-templates",
+                ".github",
+                "dependabot.yml",
+            ),
+            os.path.join(settings.APP_ROOT, "..", ".github", "dependabot.yml"),
+        )
+        self.stdout.write("Done!")
+
+        # Updates github workflows
+        self.stdout.write(
+            "Copying .github/actions/build-and-test-branch/action.yml directory to project..."
+        )
+
+        os.makedirs(
+            os.path.join(
+                settings.APP_ROOT, "..", ".github", "actions", "build-and-test-branch"
+            ),
+            exist_ok=True,
+        )
+
+        shutil.copy(
+            os.path.join(
+                settings.ROOT_DIR,
+                "install",
+                "arches-templates",
+                ".github",
+                "actions",
+                "build-and-test-branch",
+                "action.yml",
+            ),
+            os.path.join(
+                settings.APP_ROOT,
+                "..",
+                ".github",
+                "actions",
+                "build-and-test-branch",
+                "action.yml",
+            ),
+        )
+        self.stdout.write("Done!")
+
+        self.stdout.write("Copying .github/workflows/main.yml directory to project...")
+
+        os.makedirs(
+            os.path.join(settings.APP_ROOT, "..", ".github", "workflows"),
+            exist_ok=True,
+        )
+
+        shutil.copy(
+            os.path.join(
+                settings.ROOT_DIR,
+                "install",
+                "arches-templates",
+                ".github",
+                "workflows",
+                "main.yml",
+            ),
+            os.path.join(settings.APP_ROOT, "..", ".github", "workflows", "main.yml"),
+        )
+        self.stdout.write("Done!")
+
+        # Replaces vitest config files
+        self.stdout.write("Updating vitest configuration files...")
+
+        for config_file in [
+            "vitest.config.mts",
+            "vitest.setup.mts",
+        ]:
+            self.stdout.write("Copying {} to project directory".format(config_file))
+            shutil.copy2(
+                os.path.join(
+                    settings.ROOT_DIR, "install", "arches-templates", config_file
+                ),
+                os.path.join(settings.APP_ROOT, ".."),
+            )
+
+        self.stdout.write("Done!")
+
+        # Interpolates variables
+        self.stdout.write("Interpolating copied files...")
+
+        arches_semantic_version = ".".join(
+            [str(arches.VERSION[0]), str(arches.VERSION[1]), str(arches.VERSION[2])]
+        )
+        arches_next_minor_version = ".".join(
+            [str(arches.VERSION[0]), str(arches.VERSION[1] + 1), "0"]
+        )
+
+        for relative_file_path in [
+            os.path.join("..", ".github/workflows/main.yml"),
+        ]:  # relative to app root directory
+            try:
+                file = open(os.path.join(settings.APP_ROOT, relative_file_path), "r")
+                file_data = file.read()
+                file.close()
+
+                updated_file_data = (
+                    file_data.replace(
+                        "{{ project_name_title_case }}",
+                        settings.APP_NAME.title().replace("_", ""),
+                    )
+                    .replace("{{ project_name }}", settings.APP_NAME)
+                    .replace("{{ arches_semantic_version }}", arches_semantic_version)
+                    .replace(
+                        "{{ arches_next_minor_version }}", arches_next_minor_version
+                    )
+                )
+
+                file = open(os.path.join(settings.APP_ROOT, relative_file_path), "w")
+                file.write(updated_file_data)
+                file.close()
+            except FileNotFoundError:
+                pass
+
+        management.call_command(
+            "graph", "publish", "--update"
+        )  # ensure graphs are v8 serialized
+        self.stdout.write("Done!")
+        self.stdout.write("Project successfully updated to version 8.0")
+
+    def update_to_v8_1(self):
+        # Adds .github/dependabot.yml
+        self.stdout.write("Copying .github/dependabot.yml to project...")
+        shutil.copy(
+            os.path.join(
+                settings.ROOT_DIR,
+                "install",
+                "arches-templates",
+                ".github",
+                "dependabot.yml",
+            ),
+            os.path.join(settings.APP_ROOT, "..", ".github", "dependabot.yml"),
+        )
+        self.stdout.write("Done!")

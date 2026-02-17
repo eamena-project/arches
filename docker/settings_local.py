@@ -35,11 +35,16 @@ DATABASES = {
         "HOST": get_env_variable("PGHOST"),
         "PORT": get_env_variable("PGPORT"),
         "POSTGIS_TEMPLATE": "template_postgis",
+        "OPTIONS": {
+            "options": "-c cursor_tuple_fraction=1",
+        },
     }
 }
 
 ELASTICSEARCH_HTTP_PORT = get_env_variable("ESPORT")
-ELASTICSEARCH_HOSTS = [{"host": get_env_variable("ESHOST"), "port": ELASTICSEARCH_HTTP_PORT}]
+ELASTICSEARCH_HOSTS = [
+    {"host": get_env_variable("ESHOST"), "port": ELASTICSEARCH_HTTP_PORT}
+]
 
 USER_ELASTICSEARCH_PREFIX = get_optional_env_variable("ELASTICSEARCH_PREFIX")
 if USER_ELASTICSEARCH_PREFIX:

@@ -28,34 +28,25 @@ from arches.app.views.base import MapBaseManagerView
 class PluginView(MapBaseManagerView):
     action = None
 
-    def get(self, request, pluginid=None, slug=None):
+    def get(self, request, pluginid=None, slug=None, path=None):
         if slug is not None:
             plugin = models.Plugin.objects.get(slug=slug)
         else:
             plugin = models.Plugin.objects.get(pk=pluginid)
 
         if not request.user.has_perm("view_plugin", plugin):
-            if slug is not None:
-                return redirect("/auth?next=/plugins/{}".format(slug))
-            if slug is not None:
-                return redirect("/auth?next=/plugins/{}".format(pluginid))
+            return redirect("/auth/?next=" + request.path)
 
         if request.GET.get("json"):
             return JSONResponse(plugin)
-        
-        if plugin.config.get('is_standalone'):
-            context = self.get_context_data(
-                plugin=plugin,
-                plugin_json=JSONSerializer().serialize(plugin),
-                main_script="views/plugin-standalone",
-            )
 
-            return render(request, "views/plugin-standalone.htm", context)
-        
         resource_graphs = (
-            models.GraphModel.objects.exclude(pk=settings.SYSTEM_SETTINGS_RESOURCE_MODEL_ID)
+            models.GraphModel.objects.exclude(
+                pk=settings.SYSTEM_SETTINGS_RESOURCE_MODEL_ID
+            )
             .exclude(isresource=False)
-            .exclude(publication=None)
+            .exclude(is_active=False)
+            .exclude(source_identifier__isnull=False)
         )
         widgets = models.Widget.objects.all()
         card_components = models.CardComponent.objects.all()
@@ -75,11 +66,15 @@ class PluginView(MapBaseManagerView):
             widgets_json=JSONSerializer().serialize(widgets),
             card_components=card_components,
             card_components_json=JSONSerializer().serialize(card_components),
-            datatypes_json=JSONSerializer().serialize(datatypes, exclude=["iconclass", "modulename", "classname"]),
+            datatypes_json=JSONSerializer().serialize(
+                datatypes, exclude=["iconclass", "modulename", "classname"]
+            ),
             map_markers=map_markers,
             geocoding_providers=geocoding_providers,
             report_templates=templates,
-            templates_json=JSONSerializer().serialize(templates, sort_keys=False, exclude=["name", "description"]),
+            templates_json=JSONSerializer().serialize(
+                templates, sort_keys=False, exclude=["name", "description"]
+            ),
         )
 
         context["nav"]["title"] = ""
@@ -89,12 +84,18 @@ class PluginView(MapBaseManagerView):
 
         if plugin.componentname == "etl-manager":
             template_paths = []
-            for etl_module in models.ETLModule.objects.order_by("helpsortorder"):
+            for etl_module in models.ETLModule.objects.all():
                 if etl_module.helptemplate:
                     template_paths.append(etl_module.helptemplate)
             if len(template_paths) > 0:
-                context["nav"]["help"] = {"title": _("Plugin Help"), "templates": template_paths}
+                context["nav"]["help"] = {
+                    "title": _("Plugin Help"),
+                    "templates": template_paths,
+                }
         elif plugin.helptemplate:
-            context["nav"]["help"] = {"title": _("Help"), "templates": [plugin.helptemplate]}
+            context["nav"]["help"] = {
+                "title": _("Help"),
+                "templates": [plugin.helptemplate],
+            }
 
         return render(request, "views/plugin.htm", context)

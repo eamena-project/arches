@@ -1,25 +1,43 @@
-define([
-    'jquery',
-    'knockout',
-    'underscore',
-    'arches',
-    'templates/views/components/datatypes/geojson-feature-collection.htm',
-    'bindings/color-picker',
-    'bindings/mapbox-gl',
-    'bindings/codemirror',
-    'bindings/key-events-click',
-    'codemirror/mode/javascript/javascript',
-    'bindings/ckeditor',
-    'views/components/icon-selector'
-], function($, ko, _, arches, geojsonFeatureCollectionDatatypeTemplate) {
-    var name = 'geojson-feature-collection-datatype-config';
-    const viewModel = function(params) {
-        var self = this;
-         
-        this.node = params;
-        this.config = params.config;
-        this.graph = params.graph;
-        this.layer = params.layer;
+import $ from 'jquery';
+import _ from 'underscore';
+import ko from 'knockout';
+import arches from 'arches';
+import geojsonFeatureCollectionDatatypeTemplate from 'templates/views/components/datatypes/geojson-feature-collection.htm';
+import 'bindings/color-picker';
+import 'bindings/mapbox-gl';
+import 'bindings/codemirror';
+import 'bindings/key-events-click';
+import 'codemirror/mode/javascript/javascript';
+import 'bindings/ckeditor';
+import 'views/components/icon-selector';
+
+
+var name = 'geojson-feature-collection-datatype-config';
+const viewModel = function(params) {
+    var self = this;
+        
+    this.node = params;
+    this.config = params.config;
+    this.graph = params.graph;
+    this.layer = params.layer;
+    this.search = params.search;
+
+    if (this.search) {
+        var filter = params.filterValue();
+        this.op = ko.observable(filter.op || '~');
+        this.node = params.node;
+        this.searchValue = ko.observable(filter.val || '');
+        this.filterValue = ko.computed(function() {
+            return {
+                op: self.op(),
+                val: self.searchValue()
+            };
+        }).extend({ throttle: 750 });
+        params.filterValue(this.filterValue());
+        this.filterValue.subscribe(function(val) {
+            params.filterValue(val);
+        });
+    } else {
         let haloWeightValue = self.config.haloWeight();
         let outlineWeightValue = self.config.outlineWeight();
         let weightValue = self.config.weight();
@@ -275,12 +293,12 @@ define([
                 });
             };
         }
-    };
+    }
+};
 
-    ko.components.register(name, {
-        viewModel: viewModel,
-        template: geojsonFeatureCollectionDatatypeTemplate,
-    });
-    
-    return name;
+ko.components.register(name, {
+    viewModel: viewModel,
+    template: geojsonFeatureCollectionDatatypeTemplate,
 });
+
+export default name;

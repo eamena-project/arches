@@ -1,32 +1,28 @@
 {
-  "compilerOptions": {
-    "noEmit": true,
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "jsx": "preserve",
-    "jsxImportSource": "vue",
-    "noImplicitThis": false,
-    "strict": true,
-    "verbatimModuleSyntax": true,
-    "target": "ESNext",
-    "useDefineForClassFields": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "baseUrl": "./arches/app/src/",
-    "paths": {
-      "@/*": [
-        "*.ts",
-        "*.vue"
-      ]
-    }
-  },
-  "include": [
-    "**/*.ts",
-    "**/*.vue"
-  ],
-  "vueCompilerOptions": {
-    "skipTemplateCodegen": true
-  }
+    "extends": "./frontend_configuration/tsconfig-paths.json",
+    "compilerOptions": {
+        "target": "ESNext",
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "jsx": "preserve",
+        "jsxImportSource": "vue",
+        "strict": true,
+        "noEmit": true,
+        "noImplicitThis": false,
+        "verbatimModuleSyntax": true,
+        "useDefineForClassFields": true,
+        "esModuleInterop": true,
+        "forceConsistentCasingInFileNames": true,
+        "resolveJsonModule": true,
+        "skipLibCheck": true,
+        "types": [
+            "vitest/globals"
+        ],
+        "allowImportingTsExtensions": true
+    },
+    "exclude": [
+        "**/*.test.ts",
+        "**/build/**",
+        "**/staticfiles/**",
+    ]
 }

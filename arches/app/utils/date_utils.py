@@ -70,6 +70,20 @@ class ExtendedDateFormat(SortableDateRange):
                 self.error = err
                 raise err
 
+    def get_long_year(self, date):
+        """
+        Dates with long years will fail to parse unless properly formatted.
+        Example: '-200000-01-01' and '20000-01-01' will fail to parse.
+        The day and month must be stripped and the year prefixed with a y.
+        """
+
+        date_elements = date.split("-")
+        if len(date_elements) == 4:
+            long_year = f"y-{date_elements[1]}"
+        if len(date_elements) == 3:
+            long_year = f"y{date_elements[0]}"
+        return long_year
+
     def parse(self, date=None):
         if date is None:
             return None
@@ -91,7 +105,13 @@ class ExtendedDateFormat(SortableDateRange):
         except Exception:
             pass
 
-        self.edtf = parse_edtf(date)
+        try:
+            self.edtf = parse_edtf(date)
+        # Exception is likely because year has more than 4 digits
+        except Exception as e:
+            long_year = self.get_long_year(date)
+            self.edtf = parse_edtf(long_year)
+
         result = self.handle_object(self.edtf)
         if isinstance(result, list):
             self.result_set = result
@@ -102,7 +122,15 @@ class ExtendedDateFormat(SortableDateRange):
             self.upper_fuzzy = result.upper_fuzzy
 
     def is_valid(self):
-        return True if self.lower or self.upper or self.lower_fuzzy or self.upper_fuzzy or self.result_set else False
+        return (
+            True
+            if self.lower
+            or self.upper
+            or self.lower_fuzzy
+            or self.upper_fuzzy
+            or self.result_set
+            else False
+        )
 
     def is_leap_year(self, year):
         if ((year % 4 == 0) and (year % 100 != 0)) or (year % 400 == 0):
@@ -125,7 +153,11 @@ class ExtendedDateFormat(SortableDateRange):
 
         """
 
-        if isinstance(object, Date) or isinstance(object, Season) or isinstance(object, Unspecified):
+        if (
+            isinstance(object, Date)
+            or isinstance(object, Season)
+            or isinstance(object, Unspecified)
+        ):
             if isinstance(object, PartialUncertainOrApproximate):
                 fuzzy_padding = self.get_fuzzy_padding(object)
             return self.handle_date(object, fuzzy_padding)
@@ -133,7 +165,11 @@ class ExtendedDateFormat(SortableDateRange):
             return self.handle_object(object.date, self.get_fuzzy_padding(object))
         elif isinstance(object, DateAndTime) or isinstance(object, PartialUnspecified):
             return self.handle_object(object.date)
-        elif isinstance(object, Interval) or isinstance(object, Level1Interval) or isinstance(object, Level2Interval):
+        elif (
+            isinstance(object, Interval)
+            or isinstance(object, Level1Interval)
+            or isinstance(object, Level2Interval)
+        ):
             return self.handle_interval(object)
         elif isinstance(object, LongYear) or isinstance(object, ExponentialYear):
             return self.handle_yearonly(object)
@@ -158,13 +194,20 @@ class ExtendedDateFormat(SortableDateRange):
         year = date._precise_year(EARLIEST)
         month = date._precise_month(EARLIEST)
         day = date._precise_day(EARLIEST)
-        dr.lower = dr.lower_fuzzy = self.to_sortable_date(year=year, month=month, day=day)
+        dr.lower = dr.lower_fuzzy = self.to_sortable_date(
+            year=year, month=month, day=day
+        )
 
         if fuzzy_padding:
             transposed_year = (year % 400) + 400
-            lower_fuzzy = datetime.date(year=transposed_year, month=month, day=day) - fuzzy_padding
+            lower_fuzzy = (
+                datetime.date(year=transposed_year, month=month, day=day)
+                - fuzzy_padding
+            )
             year_diff = transposed_year - lower_fuzzy.year
-            dr.lower_fuzzy = self.to_sortable_date(year=(year - year_diff), month=lower_fuzzy.month, day=lower_fuzzy.day)
+            dr.lower_fuzzy = self.to_sortable_date(
+                year=(year - year_diff), month=lower_fuzzy.month, day=lower_fuzzy.day
+            )
 
         year = date._precise_year(LATEST)
         month = date._precise_month(LATEST)
@@ -172,22 +215,38 @@ class ExtendedDateFormat(SortableDateRange):
             day = date._precise_day(LATEST)
         except ValueError:
             day = self.calculate_upper_day(year, month)
-        dr.upper = dr.upper_fuzzy = self.to_sortable_date(year=year, month=month, day=day)
+        dr.upper = dr.upper_fuzzy = self.to_sortable_date(
+            year=year, month=month, day=day
+        )
 
         if fuzzy_padding:
             transposed_year = (year % 400) + 400
-            upper_fuzzy = datetime.date(year=transposed_year, month=month, day=day) + fuzzy_padding
+            upper_fuzzy = (
+                datetime.date(year=transposed_year, month=month, day=day)
+                + fuzzy_padding
+            )
             year_diff = upper_fuzzy.year - transposed_year
             fuzzy_year = year + year_diff
             day = upper_fuzzy.day
 
             # we need to recaculate the day under special circumstances
-            if date.day is None and not self.is_season(date) and (date.precision == PRECISION_YEAR or date.precision == PRECISION_MONTH):
+            if (
+                date.day is None
+                and not self.is_season(date)
+                and (
+                    date.precision == PRECISION_YEAR
+                    or date.precision == PRECISION_MONTH
+                )
+            ):
                 day = self.calculate_upper_day(fuzzy_year, upper_fuzzy.month)
-            elif date.day is not None and int(date.day) >= 29 and upper_fuzzy.month == 2:
+            elif (
+                date.day is not None and int(date.day) >= 29 and upper_fuzzy.month == 2
+            ):
                 day = self.calculate_upper_day(fuzzy_year, upper_fuzzy.month)
 
-            dr.upper_fuzzy = self.to_sortable_date(year=fuzzy_year, month=upper_fuzzy.month, day=day)
+            dr.upper_fuzzy = self.to_sortable_date(
+                year=fuzzy_year, month=upper_fuzzy.month, day=day
+            )
 
         return dr
 
@@ -232,20 +291,34 @@ class ExtendedDateFormat(SortableDateRange):
             num_length = len(str(object._precise_year()))
             sig_digits = str(object._precise_year())[0 : int(object.precision)]
             padding = num_length - int(object.precision)
-            dr.lower = dr.lower_fuzzy = self.to_sortable_date(year=(sig_digits + ("0" * padding)))
-            dr.upper = dr.upper_fuzzy = self.to_sortable_date(year=(sig_digits + ("9" * padding)), month=12, day=31)
+            dr.lower = dr.lower_fuzzy = self.to_sortable_date(
+                year=(sig_digits + ("0" * padding))
+            )
+            dr.upper = dr.upper_fuzzy = self.to_sortable_date(
+                year=(sig_digits + ("9" * padding)), month=12, day=31
+            )
         except:
             # support for edtf.LongYear
-            dr.lower = dr.lower_fuzzy = self.to_sortable_date(year=object._precise_year())
-            dr.upper = dr.upper_fuzzy = self.to_sortable_date(year=object._precise_year(), month=12, day=31)
+            dr.lower = dr.lower_fuzzy = self.to_sortable_date(
+                year=object._precise_year()
+            )
+            dr.upper = dr.upper_fuzzy = self.to_sortable_date(
+                year=object._precise_year(), month=12, day=31
+            )
 
         return dr
 
     def get_fuzzy_padding(self, object):
         padding_day_precision = relativedelta(days=self.fuzzy_day_padding).normalized()
-        padding_month_precision = relativedelta(months=self.fuzzy_month_padding).normalized()
-        padding_year_precision = relativedelta(years=self.fuzzy_year_padding).normalized()
-        padding_season_precision = relativedelta(weeks=self.fuzzy_season_padding).normalized()
+        padding_month_precision = relativedelta(
+            months=self.fuzzy_month_padding
+        ).normalized()
+        padding_year_precision = relativedelta(
+            years=self.fuzzy_year_padding
+        ).normalized()
+        padding_season_precision = relativedelta(
+            weeks=self.fuzzy_season_padding
+        ).normalized()
 
         if isinstance(object, UncertainOrApproximate):
             # from https://github.com/ixc/python-edtf/blob/master/edtf/parser/parser_classes.py#L366
@@ -273,11 +346,17 @@ class ExtendedDateFormat(SortableDateRange):
                 result += padding_day_precision * object.day_ua._get_multiplier()
 
             if object.year_month_ua:
-                result += padding_year_precision * object.year_month_ua._get_multiplier()
-                result += padding_month_precision * object.year_month_ua._get_multiplier()
+                result += (
+                    padding_year_precision * object.year_month_ua._get_multiplier()
+                )
+                result += (
+                    padding_month_precision * object.year_month_ua._get_multiplier()
+                )
             if object.month_day_ua:
                 result += padding_day_precision * object.month_day_ua._get_multiplier()
-                result += padding_month_precision * object.month_day_ua._get_multiplier()
+                result += (
+                    padding_month_precision * object.month_day_ua._get_multiplier()
+                )
 
             if object.season_ua:
                 result += padding_season_precision * object.season_ua._get_multiplier()

@@ -1,7 +1,6 @@
 import importlib
 import os
 import logging
-import shutil
 from celery import shared_task
 from datetime import datetime
 from datetime import timedelta
@@ -9,6 +8,7 @@ from django.contrib.auth.models import User
 from django.core import management
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import connection
+from django.db.models import F, Q
 from django.http import HttpRequest
 from django.utils.translation import gettext as _
 from arches.app.models import models
@@ -26,7 +26,9 @@ def delete_file():
     logger = logging.getLogger(__name__)
     file_list = []
     range = datetime.now() - timedelta(seconds=settings.CELERY_SEARCH_EXPORT_EXPIRES)
-    exports = models.SearchExportHistory.objects.filter(exporttime__lt=range).exclude(downloadfile="")
+    exports = models.SearchExportHistory.objects.filter(exporttime__lt=range).exclude(
+        downloadfile=""
+    )
     for export in exports:
         file_list.append(export.downloadfile.url)
         export.downloadfile.delete()
@@ -74,7 +76,9 @@ def export_search_results(self, userid, request_values, format, report_link):
                 tmp.seek(0)
                 stream = tmp.read()
                 export_files[0]["outputfile"] = tmp
-                exportid = exporter.write_export_zipfile(export_files, export_info, export_name)
+                exportid = exporter.write_export_zipfile(
+                    export_files, export_info, export_name
+                )
         except OSError:
             logger.error("Temp file could not be created.")
             raise
@@ -86,27 +90,40 @@ def export_search_results(self, userid, request_values, format, report_link):
 
     search_history_obj = models.SearchExportHistory.objects.get(pk=exportid)
 
-    expiration_date = datetime.now() + timedelta(seconds=settings.CELERY_SEARCH_EXPORT_EXPIRES)
+    expiration_date = datetime.now() + timedelta(
+        seconds=settings.CELERY_SEARCH_EXPORT_EXPIRES
+    )
     formatted_expiration_date = expiration_date.strftime("%A, %d %B %Y")
 
     context = return_message_context(
-        greeting=_("Hello,\nYour request to download a set of search results is now ready. You have until {} to access this download, after which time it'll be deleted.".format(formatted_expiration_date)),
+        greeting=_(
+            "Hello,\nYour request to download a set of search results is now ready. You have until {} to access this download, after which time it'll be deleted.".format(
+                formatted_expiration_date
+            )
+        ),
         closing_text=_("Thank you"),
         email=email,
         additional_context={
-            "link":str(exportid),
-            "button_text":_("Download Now"),
-            "name":export_name,
-            "email_link":str(settings.PUBLIC_SERVER_ADDRESS).rstrip("/") + "/files/" + str(search_history_obj.downloadfile),
-            "username":_user.first_name or _user.username
+            "link": str(exportid),
+            "button_text": _("Download Now"),
+            "name": export_name,
+            "email_link": str(settings.PUBLIC_SERVER_ADDRESS).rstrip("/")
+            + "/files/"
+            + str(exportid),
+            "username": _user.first_name or _user.username,
         },
     )
 
     return {
         "taskid": self.request.id,
-        "msg": _("Your search '{}' is ready for download. You have until {} to access this file, after which we'll automatically remove it.".format(export_name, formatted_expiration_date)),
+        "msg": _(
+            "Your search '{}' is ready for download. You have until {} to access this file, after which we'll automatically remove it.".format(
+                export_name, formatted_expiration_date
+            )
+        ),
         "notiftype_name": "Search Export Download Ready",
-        "context":context}
+        "context": context,
+    }
 
 
 @shared_task(bind=True)
@@ -121,7 +138,13 @@ def refresh_geojson_geometries(self):
 
 @shared_task(bind=True)
 def import_business_data(
-    self, data_source="", overwrite="", bulk_load=False, create_concepts=False, create_collections=False, prevent_indexing=False
+    self,
+    data_source="",
+    overwrite="",
+    bulk_load=False,
+    create_concepts=False,
+    create_collections=False,
+    prevent_indexing=False,
 ):
     management.call_command(
         "packages",
@@ -147,21 +170,26 @@ def index_resource(self, module, index_name, resource_id, tile_ids):
 
 
 @shared_task
-def package_load_complete(*args, **kwargs):    
+def package_load_complete(*args, **kwargs):
     valid_resource_paths = kwargs.get("valid_resource_paths")
-    
+
     msg = _("Resources have completed loading.")
     notifytype_name = "Package Load Complete"
     user = User.objects.get(id=1)
     context = return_message_context(
-        greeting=_("Hello,\nYour package has successfully loaded into your Arches project."),
+        greeting=_(
+            "Hello,\nYour package has successfully loaded into your Arches project."
+        ),
         closing_text=_("Thank you"),
         email=user.email,
         additional_context={
-            "link":"",
-            "loaded_resource":[os.path.basename(os.path.normpath(resource_path)) for resource_path in valid_resource_paths],
-            "link_text":_("Log me in")
-        }
+            "link": "",
+            "loaded_resource": [
+                os.path.basename(os.path.normpath(resource_path))
+                for resource_path in valid_resource_paths
+            ],
+            "link_text": _("Log me in"),
+        },
     )
     notify_completion(msg, user, notifytype_name, context)
 
@@ -213,7 +241,10 @@ def on_chord_error(request, exc, traceback):
     user = User.objects.get(id=1)
     notify_completion(msg, user)
 
-def load_excel_data(import_module, importer_name, userid, files, summary, result, temp_dir, loadid):
+
+def load_excel_data(
+    import_module, importer_name, userid, files, summary, result, temp_dir, loadid
+):
     logger = logging.getLogger(__name__)
     try:
         import_module.run_load_task(userid, files, summary, result, temp_dir, loadid)
@@ -221,7 +252,7 @@ def load_excel_data(import_module, importer_name, userid, files, summary, result
         load_event = models.LoadEvent.objects.get(loadid=loadid)
         status = _("Completed") if load_event.status == "indexed" else _("Failed")
     except Exception as e:
-        logger.error(e)
+        logger.error(e, exc_info=True)
         load_event = models.LoadEvent.objects.get(loadid=loadid)
         load_event.status = "failed"
         load_event.save()
@@ -236,30 +267,68 @@ def load_excel_data(import_module, importer_name, userid, files, summary, result
 def load_branch_excel(userid, files, summary, result, temp_dir, loadid):
     from arches.app.etl_modules import branch_excel_importer
 
-    BranchExcelImporter = branch_excel_importer.BranchExcelImporter(request=None, loadid=loadid, temp_dir=temp_dir)
-    load_excel_data(BranchExcelImporter, "Branch Excel Import", userid, files, summary, result, temp_dir, loadid)
+    BranchExcelImporter = branch_excel_importer.BranchExcelImporter(
+        request=None, loadid=loadid, temp_dir=temp_dir
+    )
+    load_excel_data(
+        BranchExcelImporter,
+        "Branch Excel Import",
+        userid,
+        files,
+        summary,
+        result,
+        temp_dir,
+        loadid,
+    )
 
 
 @shared_task
 def load_tile_excel(userid, files, summary, result, temp_dir, loadid):
     from arches.app.etl_modules import tile_excel_importer
 
-    TileExcelImporter = tile_excel_importer.TileExcelImporter(request=None, loadid=loadid, temp_dir=temp_dir)
-    load_excel_data(TileExcelImporter, "Tile Excel Import", userid, files, summary, result, temp_dir, loadid)
+    TileExcelImporter = tile_excel_importer.TileExcelImporter(
+        request=None, loadid=loadid, temp_dir=temp_dir
+    )
+    load_excel_data(
+        TileExcelImporter,
+        "Tile Excel Import",
+        userid,
+        files,
+        summary,
+        result,
+        temp_dir,
+        loadid,
+    )
 
 
 @shared_task
-def export_excel_data(import_module, user_id, load_id, graph_id, graph_name, resource_ids, export_concepts_as=None, filename=None):
+def export_excel_data(
+    import_module,
+    user_id,
+    load_id,
+    graph_id,
+    graph_name,
+    resource_ids,
+    export_concepts_as=None,
+    filename=None,
+):
     logger = logging.getLogger(__name__)
 
     status = _("Failed")
     try:
-        import_module.run_export_task(load_id, graph_id, graph_name, resource_ids, export_concepts_as=export_concepts_as, filename=filename)
+        import_module.run_export_task(
+            load_id,
+            graph_id,
+            graph_name,
+            resource_ids,
+            export_concepts_as=export_concepts_as,
+            filename=filename,
+        )
 
         load_event = models.LoadEvent.objects.get(loadid=load_id)
         status = _("Completed") if load_event.status == "indexed" else _("Failed")
     except Exception as e:
-        logger.error(e)
+        logger.error(e, exc_info=True)
         load_event = models.LoadEvent.objects.get(loadid=load_id)
         load_event.status = "failed"
         load_event.save()
@@ -268,35 +337,86 @@ def export_excel_data(import_module, user_id, load_id, graph_id, graph_name, res
         user = User.objects.get(id=user_id)
         notify_completion(msg, user)
 
+
 @shared_task
-def export_branch_excel(userid, load_id, graph_id, graph_name, resource_ids, filename=None):
+def export_branch_excel(
+    userid, load_id, graph_id, graph_name, resource_ids, filename=None
+):
     from arches.app.etl_modules import branch_excel_exporter
 
-    BranchExcelExporter = branch_excel_exporter.BranchExcelExporter(request=None, loadid=load_id)
-    export_excel_data(BranchExcelExporter, userid, load_id, graph_id, graph_name, resource_ids, filename)
+    BranchExcelExporter = branch_excel_exporter.BranchExcelExporter(
+        request=None, loadid=load_id
+    )
+    export_excel_data(
+        BranchExcelExporter,
+        userid,
+        load_id,
+        graph_id,
+        graph_name,
+        resource_ids,
+        filename,
+    )
 
 
 @shared_task
-def export_tile_excel(userid, load_id, graph_id, graph_name, resource_ids, export_concepts_as, filename=None):
+def export_tile_excel(
+    userid,
+    load_id,
+    graph_id,
+    graph_name,
+    resource_ids,
+    export_concepts_as,
+    filename=None,
+):
     from arches.app.etl_modules import tile_excel_exporter
 
-    TileExcelExporter = tile_excel_exporter.TileExcelExporter(request=None, loadid=load_id)
-    export_excel_data(TileExcelExporter, userid, load_id, graph_id, graph_name, resource_ids, export_concepts_as, filename)
+    TileExcelExporter = tile_excel_exporter.TileExcelExporter(
+        request=None, loadid=load_id
+    )
+    export_excel_data(
+        TileExcelExporter,
+        userid,
+        load_id,
+        graph_id,
+        graph_name,
+        resource_ids,
+        export_concepts_as,
+        filename,
+    )
+
 
 @shared_task
-def load_single_csv(userid, loadid, graphid, has_headers, fieldnames, csv_mapping, csv_file_name, id_label):
+def load_single_csv(
+    userid,
+    loadid,
+    graphid,
+    has_headers,
+    fieldnames,
+    csv_mapping,
+    csv_file_name,
+    id_label,
+):
     from arches.app.etl_modules import import_single_csv
 
     logger = logging.getLogger(__name__)
 
     try:
         ImportSingleCsv = import_single_csv.ImportSingleCsv(loadid=loadid)
-        ImportSingleCsv.run_load_task(userid, loadid, graphid, has_headers, fieldnames, csv_mapping, csv_file_name, id_label)
+        ImportSingleCsv.run_load_task(
+            userid,
+            loadid,
+            graphid,
+            has_headers,
+            fieldnames,
+            csv_mapping,
+            csv_file_name,
+            id_label,
+        )
 
         load_event = models.LoadEvent.objects.get(loadid=loadid)
         status = _("Completed") if load_event.status == "indexed" else _("Failed")
     except Exception as e:
-        logger.error(e)
+        logger.error(e, exc_info=True)
         load_event = models.LoadEvent.objects.get(loadid=loadid)
         load_event.status = "failed"
         load_event.save()
@@ -308,19 +428,70 @@ def load_single_csv(userid, loadid, graphid, has_headers, fieldnames, csv_mappin
 
 
 @shared_task
-def edit_bulk_string_data(userid, load_id, module_id, graph_id, node_id, operation, language_code, old_text, new_text, resourceids):
+def load_json_ld(userid, files, summary, result, temp_dir, loadid, moduleid):
+    from arches.app.etl_modules import jsonld_importer
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        importer = jsonld_importer.JSONLDImporter(
+            loadid=loadid,
+            userid=userid,
+            moduleid=moduleid,
+        )
+        importer.temp_dir = temp_dir
+        importer.run_load_task(userid, files, summary, result, temp_dir, loadid)
+
+        load_event = models.LoadEvent.objects.get(loadid=loadid)
+        status = _("Completed") if load_event.status == "indexed" else _("Failed")
+    except Exception as e:
+        logger.error(e, exc_info=True)
+        load_event = models.LoadEvent.objects.filter(loadid=loadid).update(
+            status="failed"
+        )
+        status = _("Failed")
+    finally:
+        msg = _("JSON-LD Import: {} [{}]").format(summary["name"], status)
+        user = User.objects.get(id=userid)
+        notify_completion(msg, user)
+
+
+@shared_task
+def edit_bulk_string_data(
+    userid,
+    load_id,
+    module_id,
+    graph_id,
+    node_id,
+    operation,
+    language_code,
+    old_text,
+    new_text,
+    resourceids,
+):
     from arches.app.etl_modules import base_data_editor
 
     logger = logging.getLogger(__name__)
 
     try:
         BulkStringEditor = base_data_editor.BulkStringEditor(loadid=load_id)
-        BulkStringEditor.run_load_task(userid, load_id, module_id, graph_id, node_id, operation, language_code, old_text, new_text, resourceids)
+        BulkStringEditor.run_load_task(
+            userid,
+            load_id,
+            module_id,
+            graph_id,
+            node_id,
+            operation,
+            language_code,
+            old_text,
+            new_text,
+            resourceids,
+        )
 
         load_event = models.LoadEvent.objects.get(loadid=load_id)
         status = _("Completed") if load_event.status == "indexed" else _("Failed")
     except Exception as e:
-        logger.error(e)
+        logger.error(e, exc_info=True)
         load_event = models.LoadEvent.objects.get(loadid=load_id)
         load_event.status = "failed"
         load_event.save()
@@ -330,6 +501,49 @@ def edit_bulk_string_data(userid, load_id, module_id, graph_id, node_id, operati
         user = User.objects.get(id=userid)
         notify_completion(msg, user)
 
+
+@shared_task
+def edit_bulk_concept_data(
+    userid,
+    load_id,
+    module_id,
+    graph_id,
+    node_id,
+    resource_ids,
+    unselected_tiles,
+    oldid,
+    newid,
+):
+    from arches.app.etl_modules import bulk_edit_concept
+
+    logger = logging.getLogger(__name__)
+    try:
+        BulkConceptEditor = bulk_edit_concept.BulkConceptEditor(loadid=load_id)
+        BulkConceptEditor.run_load_task(
+            userid,
+            load_id,
+            module_id,
+            graph_id,
+            node_id,
+            resource_ids,
+            unselected_tiles,
+            oldid,
+            newid,
+        )
+        load_event = models.LoadEvent.objects.get(loadid=load_id)
+        status = _("Completed") if load_event.status == "indexed" else _("Failed")
+    except Exception as e:
+        logger.error(e, exc_info=True)
+        load_event = models.LoadEvent.objects.get(loadid=load_id)
+        load_event.status = "failed"
+        load_event.save()
+        status = _("Failed")
+    finally:
+        msg = _("Bulk Concept Editor: [{}]").format(status)
+        user = User.objects.get(id=userid)
+        notify_completion(msg, user)
+
+
 @shared_task
 def bulk_data_deletion(userid, load_id, graph_id, nodegroup_id, resourceids):
     from arches.app.etl_modules import bulk_data_deletion
@@ -338,12 +552,14 @@ def bulk_data_deletion(userid, load_id, graph_id, nodegroup_id, resourceids):
 
     try:
         BulkDataDeletion = bulk_data_deletion.BulkDataDeletion(loadid=load_id)
-        BulkDataDeletion.run_bulk_task(userid, load_id, graph_id, nodegroup_id, resourceids)
+        BulkDataDeletion.run_bulk_task(
+            userid, load_id, graph_id, nodegroup_id, resourceids
+        )
 
         load_event = models.LoadEvent.objects.get(loadid=load_id)
         status = _("Completed") if load_event.status == "indexed" else _("Failed")
     except Exception as e:
-        logger.error(e)
+        logger.error(e, exc_info=True)
         load_event = models.LoadEvent.objects.get(loadid=load_id)
         load_event.status = "failed"
         load_event.save()
@@ -357,9 +573,9 @@ def bulk_data_deletion(userid, load_id, graph_id, nodegroup_id, resourceids):
 @shared_task
 def run_task(module_name=None, class_name=None, method_to_run=None, **kwargs):
     """
-        this allows the user to run any method as a celery task
-        module_name, class_name, and method_to_run are required
-        pass any additional arguments to the method via the kwargs parameter
+    this allows the user to run any method as a celery task
+    module_name, class_name, and method_to_run are required
+    pass any additional arguments to the method via the kwargs parameter
     """
 
     theClass = getattr(importlib.import_module(module_name), class_name)
@@ -370,9 +586,9 @@ def run_task(module_name=None, class_name=None, method_to_run=None, **kwargs):
 @shared_task
 def run_etl_task(**kwargs):
     """
-        this allows the user to run the custom etl module
-        import_module, import_class, loadid, userid are the required string parameter
-        importer_name can be added (not required) for messaging purpose
+    this allows the user to run the custom etl module
+    import_module, import_class, loadid, userid are the required string parameter
+    importer_name can be added (not required) for messaging purpose
     """
 
     logger = logging.getLogger(__name__)
@@ -384,12 +600,17 @@ def run_etl_task(**kwargs):
     userid = kwargs.get("userid")
 
     try:
-        run_task(module_name=import_module, class_name=import_class, method_to_run="run_load_task", **kwargs)
+        run_task(
+            module_name=import_module,
+            class_name=import_class,
+            method_to_run="run_load_task",
+            **kwargs,
+        )
 
         load_event = models.LoadEvent.objects.get(loadid=loadid)
         status = _("Completed") if load_event.status == "indexed" else _("Failed")
     except Exception as e:
-        logger.error(e)
+        logger.error(e, exc_info=True)
         load_event = models.LoadEvent.objects.get(loadid=loadid)
         load_event.status = "failed"
         load_event.save()
@@ -408,10 +629,117 @@ def reverse_etl_load(loadid):
     module.reverse_load(loadid)
 
 
+@shared_task
+def update_resource_instance_data_based_on_graph_diff(
+    initial_graph, updated_graph, user_id
+):
+    logger = logging.getLogger(__name__)
+    user = User.objects.get(id=user_id)
+
+    # TODO: update function name to be less specific
+    notify_completion(
+        _("Updating business data based on graph changes."),
+        user,
+    )
+
+    try:
+        # delete tiles whose nodegroups are no longer in the updated graph
+        updated_nodegroup_ids = {
+            nodegroup["nodegroupid"] for nodegroup in updated_graph["nodegroups"]
+        }
+        orphaned_nodegroup_ids = {
+            nodegroup["nodegroupid"]
+            for nodegroup in initial_graph["nodegroups"]
+            if nodegroup["nodegroupid"] not in updated_nodegroup_ids
+        }
+        models.TileModel.objects.filter(
+            nodegroup_id__in=orphaned_nodegroup_ids,
+            resourceinstance__graph_publication_id=initial_graph["publication_id"],
+        ).delete()
+
+        # delete tiles whose parent tile's nodegroup_id does not match the expected parent nodegroup_id
+        models.TileModel.objects.filter(
+            parenttile__isnull=False,
+            resourceinstance__graph_publication_id=initial_graph["publication_id"],
+        ).filter(
+            ~Q(parenttile__nodegroup_id=F("nodegroup__parentnodegroup_id"))
+        ).delete()
+
+        # add/remove nodes and change default values
+        resource_instances = models.ResourceInstance.objects.filter(
+            graph_publication_id=initial_graph["publication_id"]
+        )
+        resource_instance_count = resource_instances.count()
+
+        initial_node_ids_to_default_values = {}
+        for initial_widget in initial_graph["cards_x_nodes_x_widgets"]:
+            initial_node_ids_to_default_values[initial_widget["node_id"]] = (
+                initial_widget.get("config", {}).get("defaultValue")
+            )
+
+        updated_node_ids_to_default_values = {}
+        for updated_widget in updated_graph["cards_x_nodes_x_widgets"]:
+            updated_node_ids_to_default_values[updated_widget["node_id"]] = (
+                updated_widget.get("config", {}).get("defaultValue")
+            )
+
+        for tile in models.TileModel.objects.filter(
+            resourceinstance__in=resource_instances
+        ):
+            updated_node_ids = [
+                node["nodeid"]
+                for node in updated_graph["nodes"]
+                if node["nodegroup_id"] == str(tile.nodegroup_id)
+            ]
+
+            # delete nodes not in updated graph
+            for node_id in list(tile.data.keys()):
+                if node_id not in updated_node_ids:
+                    del tile.data[node_id]
+
+            # add nodes that only exist in updated graph
+            # or update nodes default value if changed
+            for node_id in updated_node_ids:
+                initial_default_value = initial_node_ids_to_default_values.get(node_id)
+
+                if (
+                    node_id not in tile.data.keys()
+                    or tile.data[node_id] == initial_default_value
+                ):
+                    tile.data[node_id] = updated_node_ids_to_default_values.get(node_id)
+
+            tile.save()
+
+        # update resource_instance publication_id
+        for resource_instance in resource_instances:
+            resource_instance.graph_publication_id = updated_graph["publication_id"]
+            resource_instance.save()
+
+        notify_completion(
+            _(
+                "Business has been updated in concurrence with publishing the latest model. {} Resource Instances updated.".format(
+                    resource_instance_count
+                )
+            ),
+            user,
+        )
+
+    except Exception as e:
+        logger.error(e, exc_info=True)
+        notify_completion(
+            _(
+                "Business data update failed. Check the error logs for more information."
+            ),
+            user,
+        )
+
+
 def create_user_task_record(taskid, taskname, userid):
     try:
         user = User.objects.get(id=userid)
-        new_task_record = models.UserXTask.objects.create(user=user, taskid=taskid, datestart=datetime.now(), name=taskname)
+        new_task_record = models.UserXTask.objects.create(
+            user=user, taskid=taskid, datestart=datetime.now(), name=taskname
+        )
     except Exception as e:
         logger = logging.getLogger(__name__)
         logger.warning(e)
@@ -422,5 +750,7 @@ def notify_completion(msg, user, notiftype_name=None, context=None):
         notif_type = models.NotificationType.objects.get(name=notiftype_name)
     else:
         notif_type = None
-    notif = models.Notification.objects.create(notiftype=notif_type, message=msg, context=context)
+    notif = models.Notification.objects.create(
+        notiftype=notif_type, message=msg, context=context
+    )
     models.UserXNotification.objects.create(notif=notif, recipient=user)

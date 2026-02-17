@@ -1,11 +1,11 @@
 {% load template_tags %}
 {% load i18n %}
 
-<div class="relative" style="overflow-y: scroll;">
+<div class="relative">
     <div class="close-popup-panel-container">
         <span class="close-popup-panel" tabindex="0" role="button" id="search-export-close-btn" 
             data-bind="onEnterkeyClick, onSpaceClick, 
-            click: function(){selectedPopup(''); $root.shiftFocus('#search-export-open-btn');},
+            click: function(){selectedPopup(''); $root.shiftFocus('#search-export-type-open-btn');},
             attr: {'aria-label': $root.translations.closeExportSearchResults},
             text: $root.translations.exportSearchResults">
         </span>
@@ -99,14 +99,29 @@
                 <!-- ko if: format() === 'geojson' && hasResourceTypeFilter -->
                 <div data-bind="clipboard: {value: geojsonUrl, tooltip: false}">
                     <div style="padding: 5px 0px"><textarea style="width: 300px;" data-bind="value: geojsonUrl"></textarea></div>
-                    <button class="btn btn-shim btn-labeled btn-sm fa fa-clipboard btn-primary">
+                    <button class="btn btn-shim btn-labeled btn-sm fa fa-clipboard btn-primary" data-bind="click: copyGeojsonUrlText">
                         <span data-bind="text: $root.translations.copyToClipboard"></span>
                     </button>
                 </div>
+                <div class="copy-geojson-url-message" data-bind="text: copyGeojsonText, fadeVisible: showCopyText, delay:0, fade: 600, attr: {'aria-live': 'polite'}"></div>
                 <!-- /ko -->
                 <!-- /ko -->
             </div>
         </div>
+        <div class="form-text form-normal"
+            data-bind="
+                component: { 
+                    name: 'views/components/simple-switch', 
+                    params: {
+                        value: exportSystemValues, 
+                        config: { 
+                            label: $root.translations.exportSystemValuesLabel,
+                            subtitle: $root.translations.exportSystemValuesSubtitle
+                        }
+                    }
+                }
+            "
+        ></div>
 
         <!-- 2. Coordinate Precision -->
         <div class="instruction">
@@ -156,7 +171,7 @@
         </div>
 
         <!-- Options if Celery is running -->
-        <!-- ko if: ((total() > {{app_settings.SEARCH_EXPORT_IMMEDIATE_DOWNLOAD_THRESHOLD}} && celeryRunning() === "True") || (format() === "html" && total() > {{app_settings.SEARCH_EXPORT_IMMEDIATE_DOWNLOAD_THRESHOLD_HTML_FORMAT}} && celeryRunning() === "True")) && ("{{app_settings.RESTRICT_CELERY_EXPORT_FOR_ANONYMOUS_USER}}" === "False" || "{{app_settings.RESTRICT_CELERY_EXPORT_FOR_ANONYMOUS_USER}}" === "True" && "{{user.username}}" !== "anonymous")-->
+        <!-- ko if: ((total() > {{app_settings.SEARCH_EXPORT_IMMEDIATE_DOWNLOAD_THRESHOLD}} && celeryRunning() === "True") || (format() === "html" && total() > {{app_settings.SEARCH_EXPORT_IMMEDIATE_DOWNLOAD_THRESHOLD_HTML_FORMAT}} && celeryRunning() === "True")) && ("{{app_settings.RESTRICT_CELERY_EXPORT_FOR_ANONYMOUS_USER}}" === "False" || "{{app_settings.RESTRICT_CELERY_EXPORT_FOR_ANONYMOUS_USER}}" === "True" && userName() !== "anonymous")-->
         <div>
             <div class="instruction">
                 <div class="search-export-instruction-h2 h2">

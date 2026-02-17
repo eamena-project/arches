@@ -17,21 +17,19 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
 import logging
-import sys
 import uuid
 from arches.app.models.graph import Graph
 from arches.app.models.models import (
     CardXNodeXWidget,
-    NodeGroup,
     DDataType,
     Widget,
     ReportTemplate,
-    Function,
     Ontology,
     OntologyClass,
     GraphXPublishedGraph,
     Language,
     PublishedGraph,
+    Resource2ResourceConstraint,
 )
 from arches.app.utils.betterJSONSerializer import JSONSerializer, JSONDeserializer
 from arches.app.models.models import GraphXMapping
@@ -87,12 +85,19 @@ def import_graph(graphs, overwrite_graphs=True, user=None):
         errors = []
         for resource in graphs:
             if len(list(OntologyClass.objects.all())) > 0:
-                if resource["ontology_id"] is not None and resource["ontology_id"] not in [
-                    str(f["ontologyid"]) for f in Ontology.objects.all().values("ontologyid")
+                if resource["ontology_id"] is not None and resource[
+                    "ontology_id"
+                ] not in [
+                    str(f["ontologyid"])
+                    for f in Ontology.objects.all().values("ontologyid")
                 ]:
-                    errors.append("The ontologyid of the graph you're trying to load does not exist in Arches.")
+                    errors.append(
+                        "The ontologyid of the graph you're trying to load does not exist in Arches."
+                    )
             else:
-                logger.warning("No ontologies have been loaded. Any GraphModel that depends on an ontology cannot be loaded.")
+                logger.warning(
+                    "No ontologies have been loaded. Any GraphModel that depends on an ontology cannot be loaded."
+                )
 
             reporter.name = resource["name"]
             reporter.resource_model = resource["isresource"]
@@ -104,48 +109,90 @@ def import_graph(graphs, overwrite_graphs=True, user=None):
 
             try:
                 graph = Graph(resource)
-                ontology_classes = [str(f["source"]) for f in OntologyClass.objects.all().values("source")]
+                ontology_classes = [
+                    str(f["source"])
+                    for f in OntologyClass.objects.all().values("source")
+                ]
 
                 for node in list(graph.nodes.values()):
                     if resource["ontology_id"] is not None:
                         if node.ontologyclass not in ontology_classes:
-                            errors.append("The ontology class of this node does not exist in the indicated ontology scheme.")
+                            errors.append(
+                                "The ontology class of this node does not exist in the indicated ontology scheme."
+                            )
                     node_config = node.config
-                    default_config = DDataType.objects.get(datatype=node.datatype).defaultconfig
+                    default_config = DDataType.objects.get(
+                        datatype=node.datatype
+                    ).defaultconfig
                     node.config = check_default_configs(default_config, node_config)
 
                 if not hasattr(graph, "cards"):
                     errors.append("{0} graph has no attribute cards".format(graph.name))
                 else:
-                    if len(Graph.objects.filter(pk=graph.graphid)) == 0 or overwrite_graphs is True:
+                    if (
+                        len(Graph.objects.filter(pk=graph.graphid)) == 0
+                        or overwrite_graphs is True
+                    ):
                         if hasattr(graph, "reports"):
                             for report in graph.reports:
                                 if report["active"]:
                                     report_config = report["config"]
-                                    default_config = ReportTemplate.objects.get(templateid=report["template_id"]).defaultconfig
-                                    graph.config = check_default_configs(default_config, report_config)
+                                    default_config = ReportTemplate.objects.get(
+                                        templateid=report["template_id"]
+                                    ).defaultconfig
+                                    graph.config = check_default_configs(
+                                        default_config, report_config
+                                    )
                                     graph.template_id = report["template_id"]
                         graph.save()
                         reporter.update_graphs_saved()
                     else:
-                        overwrite_input = input("Overwrite {0} (Y/N) ? ".format(graph.name))
+                        overwrite_input = input(
+                            "Overwrite {0} (Y/N) ? ".format(graph.name)
+                        )
                         if overwrite_input.lower() in ("t", "true", "y", "yes"):
                             graph.save()
                         else:
-                            raise GraphImportException("{0} - already exists. Skipping import.".format(graph.name))
+                            raise GraphImportException(
+                                "{0} - already exists. Skipping import.".format(
+                                    graph.name
+                                )
+                            )
 
                 if not hasattr(graph, "cards_x_nodes_x_widgets"):
-                    errors.append("{0} graph has no attribute cards_x_nodes_x_widgets".format(graph.name))
+                    errors.append(
+                        "{0} graph has no attribute cards_x_nodes_x_widgets".format(
+                            graph.name
+                        )
+                    )
                 else:
                     for card_x_node_x_widget in graph.cards_x_nodes_x_widgets:
                         card_x_node_x_widget_config = card_x_node_x_widget["config"]
-                        default_config = Widget.objects.get(widgetid=card_x_node_x_widget["widget_id"]).defaultconfig
-                        card_x_node_x_widget["config"] = check_default_configs(default_config, card_x_node_x_widget_config)
-                        cardxnodexwidget = CardXNodeXWidget.objects.update_or_create(**card_x_node_x_widget)
+                        default_config = Widget.objects.get(
+                            widgetid=card_x_node_x_widget["widget_id"]
+                        ).defaultconfig
+                        card_x_node_x_widget["config"] = check_default_configs(
+                            default_config, card_x_node_x_widget_config
+                        )
+                        CardXNodeXWidget.objects.update_or_create(
+                            # Only check the combination of unique fields.
+                            # Comparing the entire object against the database
+                            # may fail because the incoming json may differ
+                            # slightly from the database representation, e.g.
+                            # 'placeholder': 'Enter text'
+                            # -> 'placeholder': {'en': 'Enter text'} in db
+                            card_id=card_x_node_x_widget["card_id"],
+                            node_id=card_x_node_x_widget["node_id"],
+                            widget_id=card_x_node_x_widget["widget_id"],
+                            defaults=card_x_node_x_widget,
+                        )
 
                 with transaction.atomic():
                     # saves graph publication with serialized graph
-                    graph = Graph.objects.get(pk=graph.graphid)  # retrieve graph using the ORM to ensure strings are I18n_Strings
+                    graph = Graph.objects.select_related("ontology").get(
+                        pk=graph.graphid, source_identifier_id__isnull=True
+                    )  # retrieve graph using the ORM to ensure strings are I18n_Strings
+
                     if publication_data:
                         GraphXPublishedGraph.objects.update_or_create(
                             publicationid=publication_data["publicationid"],
@@ -153,13 +200,19 @@ def import_graph(graphs, overwrite_graphs=True, user=None):
                                 "notes": publication_data.get("notes"),
                                 "graph_id": publication_data.get("graph_id"),
                                 "user_id": user.id if user else None,
-                                "published_time": publication_data.get("published_time"),
+                                "published_time": publication_data.get(
+                                    "published_time"
+                                ),
                             },
                         )
 
-                        graph.refresh_from_database()
                         graph.publication_id = publication_data["publicationid"]
-                        graph.save()
+                        graph.has_unpublished_changes = False
+
+                        Graph.objects.filter(pk=graph.pk).update(
+                            has_unpublished_changes=graph.has_unpublished_changes,
+                            publication_id=graph.publication_id,
+                        )
 
                         for language_tuple in settings.LANGUAGES:
                             language = Language.objects.get(code=language_tuple[0])
@@ -171,12 +224,16 @@ def import_graph(graphs, overwrite_graphs=True, user=None):
                                 language=language,
                                 defaults={
                                     "serialized_graph": JSONDeserializer().deserialize(
-                                        JSONSerializer().serialize(graph, force_recalculation=True)
+                                        JSONSerializer().serialize(
+                                            graph, force_recalculation=True
+                                        )
                                     )
                                 },
                             )
 
                         translation.deactivate()
+                    else:
+                        graph.publish()
 
             except GraphImportException as ge:
                 logger.exception(ge)
@@ -188,11 +245,19 @@ def import_graph(graphs, overwrite_graphs=True, user=None):
             try:
                 if not hasattr(graph, "resource_2_resource_constraints"):
                     errors.append(
-                        "{0} graph has no attribute resource_2_resource_constraints".format(graph.resource_2_resource_constraints)
+                        "{0} graph has no attribute resource_2_resource_constraints".format(
+                            graph.resource_2_resource_constraints
+                        )
                     )
                 else:
-                    for resource_2_resource_constraint in graph.resource_2_resource_constraints:
-                        resource2resourceconstraint = Resource2ResourceConstraint.objects.update_or_create(**resource_2_resource_constraint)
+                    for (
+                        resource_2_resource_constraint
+                    ) in graph.resource_2_resource_constraints:
+                        resource2resourceconstraint = (
+                            Resource2ResourceConstraint.objects.update_or_create(
+                                **resource_2_resource_constraint
+                            )
+                        )
             except:
                 pass
 
@@ -203,4 +268,6 @@ def import_mapping_file(mapping_file):
     resource_model_id = mapping_file["resource_model_id"]
     mapping = mapping_file
 
-    GraphXMapping.objects.update_or_create(graph_id=uuid.UUID(str(resource_model_id)), mapping=mapping)
+    GraphXMapping.objects.update_or_create(
+        graph_id=uuid.UUID(str(resource_model_id)), mapping=mapping
+    )

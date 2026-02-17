@@ -1,5 +1,6 @@
 from celery import app, Celery
 from datetime import datetime
+from http import HTTPStatus
 import logging
 from django.db import connection
 from django.core.paginator import Paginator
@@ -7,6 +8,7 @@ from django.forms.models import model_to_dict
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext as _
 from django.views.generic import View
+from arches.app.etl_modules.base_import_module import FileValidationError
 from arches.app.models.models import ETLModule, LoadEvent, LoadStaging
 from arches.app.utils.pagination import get_paginator
 from arches.app.utils.decorators import group_required
@@ -16,7 +18,9 @@ import arches.app.utils.task_management as task_management
 logger = logging.getLogger(__name__)
 
 
-@method_decorator(group_required("Resource Editor"), name="dispatch")
+@method_decorator(
+    group_required("Resource Editor", raise_exception=True), name="dispatch"
+)
 class ETLManagerView(View):
     """
     to get the ETL modules from db
@@ -45,9 +49,15 @@ class ETLManagerView(View):
                 FROM load_errors e
                 JOIN nodes n ON e.nodegroupid = n.nodeid
                 WHERE loadid = %s AND e.type = 'tile'
-                GROUP BY n.name, e.error, e.datatype, e.type, e.nodegroupid);
+                GROUP BY n.name, e.error, e.datatype, e.type, e.nodegroupid)
+                -- Add any errors without a nodegroup, e.g. early json-ld failures
+                UNION
+                (SELECT e.source, e.error, e.datatype, count(e.source), e.type, e.nodeid
+                FROM load_errors e
+                WHERE loadid = %s AND e.nodegroupid IS NULL
+                GROUP BY e.source, e.error, e.datatype, e.type, e.nodeid);
             """,
-                [loadid, loadid],
+                [loadid, loadid, loadid],
             )
             rows = self.dictfetchall(cursor)
         return {"success": True, "data": rows}
@@ -74,20 +84,41 @@ class ETLManagerView(View):
 
     def node_error(self, loadid, nodeid, error):
         """
-        Creates records in the load_staging table (validated before poulating the load_staging table with error message)
-        Collects error messages if any and returns table of error messages
+        Creates records in the load_staging table (validated before poulating
+        the load_staging table with error message).
+        Collects error messages if any and returns table of error messages.
         """
 
+        if nodeid == "null":
+            nodeid = None
+        if error == "null":
+            error = None
+
+        sql = """
+        SELECT n.name as node, e.error, e.message, e.value, e.source, e.nodeid, e.nodegroupid
+        FROM load_errors e
+        """
+        if nodeid:
+            sql += """
+            JOIN nodes n ON n.nodeid = e.nodeid
+            WHERE loadid = %s AND e.nodeid = %s AND e.error = %s
+            """
+            params = [loadid, nodeid, error]
+        elif error:
+            sql += """
+            LEFT JOIN nodes n ON n.nodeid = e.nodeid
+            WHERE loadid = %s AND e.nodeid IS NULL AND e.error = %s 
+            """
+            params = [loadid, error]
+        else:
+            sql += """
+            LEFT JOIN nodes n ON n.nodeid = e.nodeid
+            WHERE loadid = %s AND e.nodeid IS NULL AND e.error IS NULL
+            """
+            params = [loadid]
+
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT n.name as node, e.error, e.message, e.value, e.source, e.nodeid, e.nodegroupid
-                FROM load_errors e
-                JOIN nodes n ON n.nodeid = e.nodeid
-                WHERE loadid = %s AND e.nodeid = %s AND e.error = %s
-                """,
-                [loadid, nodeid, error],
-            )
+            cursor.execute(sql, params)
             rows = self.dictfetchall(cursor)
         return {"success": True, "data": rows}
 
@@ -115,7 +146,9 @@ class ETLManagerView(View):
                 )
             return {"success": True, "data": result}
         else:
-            err = _("Unable to perform this operation because Celery does not appear to be running. Please contact your administrator.")
+            err = _(
+                "Unable to perform this operation because Celery does not appear to be running. Please contact your administrator."
+            )
             return {"success": False, "data": {"title": _("Error"), "message": err}}
 
     def get(self, request):
@@ -124,23 +157,42 @@ class ETLManagerView(View):
         nodeid = request.GET.get("nodeid", None)
         error = request.GET.get("error", None)
         page = int(request.GET.get("page", 1))
+        user = request.user
         if action == "modules" or action is None:
             response = []
             for module in ETLModule.objects.all():
-                show = False if "show" in module.config.keys() and module.config["show"] is False else True
+                show = (
+                    False
+                    if "show" in module.config.keys() and module.config["show"] is False
+                    else True
+                )
                 if self.request.user.has_perm("view_etlmodule", module) and show:
                     response.append(module)
         elif action == "loadEvent":
             item_per_page = 5
-            all_events = LoadEvent.objects.all().order_by(("-load_start_time")).prefetch_related("user", "etl_module")
-            events = Paginator(all_events, item_per_page).page(page).object_list
-            total = len(all_events)
-            paginator, pages = get_paginator(request, all_events, total, page, item_per_page)
+            if user.is_superuser:
+                event_filter = LoadEvent.objects.all()
+            else:
+                event_filter = LoadEvent.objects.filter(user=user)
+
+            filtered_events = event_filter.order_by(
+                ("-load_start_time")
+            ).select_related("user", "etl_module")
+
+            events = Paginator(filtered_events, item_per_page).page(page).object_list
+            total = len(filtered_events)
+            paginator, pages = get_paginator(
+                request, filtered_events, total, page, item_per_page
+            )
             page = paginator.page(page)
 
             response = {
                 "events": [
-                    {**model_to_dict(event), "user": {**model_to_dict(event.user)}, "etl_module": {**model_to_dict(event.etl_module)}}
+                    {
+                        **model_to_dict(event),
+                        "user_displayname": self.format_username(event.user),
+                        "etl_module": {**model_to_dict(event.etl_module)},
+                    }
                     for event in events
                 ]
             }
@@ -149,8 +201,12 @@ class ETLManagerView(View):
             response["paginator"]["has_next"] = page.has_next()
             response["paginator"]["has_previous"] = page.has_previous()
             response["paginator"]["has_other_pages"] = page.has_other_pages()
-            response["paginator"]["next_page_number"] = page.next_page_number() if page.has_next() else None
-            response["paginator"]["previous_page_number"] = page.previous_page_number() if page.has_previous() else None
+            response["paginator"]["next_page_number"] = (
+                page.next_page_number() if page.has_next() else None
+            )
+            response["paginator"]["previous_page_number"] = (
+                page.previous_page_number() if page.has_previous() else None
+            )
             response["paginator"]["start_index"] = page.start_index()
             response["paginator"]["end_index"] = page.end_index()
             response["paginator"]["pages"] = pages
@@ -167,7 +223,17 @@ class ETLManagerView(View):
             response = self.node_error(loadid, nodeid, error)
         elif action == "errorReport" and loadid:
             return JSONResponse(self.error_report(loadid)["data"], indent=2)
+        else:
+            return JSONErrorResponse(status=HTTPStatus.BAD_REQUEST)
         return JSONResponse(response)
+
+    @staticmethod
+    def format_username(user):
+        parts = [part for part in (user.first_name, user.last_name) if part]
+        if parts:
+            return " ".join(parts)
+        else:
+            return user.username
 
     def post(self, request):
         """
@@ -176,13 +242,17 @@ class ETLManagerView(View):
         """
         action = request.POST.get("action")
         moduleid = request.POST.get("module")
-        import_module = ETLModule.objects.get(pk=moduleid).get_class_module()(request)
+        import_module = ETLModule.objects.get(pk=moduleid).get_class_module()(
+            request=request
+        )
         import_function = getattr(import_module, action)
-        response = import_function(request=request)
+        response = import_function(request)
         if response["success"] and "raw" not in response:
             ret = {"result": response["data"]}
             return JSONResponse(ret)
         elif response["success"] and "raw" in response:
             return response["raw"]
         else:
+            if (data := response.get("data")) and isinstance(data, FileValidationError):
+                return JSONErrorResponse(content=response, status=data.code)
             return JSONErrorResponse(content=response)

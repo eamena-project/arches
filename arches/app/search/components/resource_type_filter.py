@@ -1,7 +1,7 @@
 from arches.app.utils.betterJSONSerializer import JSONDeserializer
 from arches.app.search.elasticsearch_dsl_builder import Bool, Terms
 from arches.app.search.components.base import BaseSearchFilter
-from arches.app.models.models import Node
+from arches.app.models.models import GraphModel, Node
 from arches.app.utils.permission_backend import get_resource_types_by_perm
 
 details = {
@@ -10,25 +10,34 @@ details = {
     "icon": "",
     "modulename": "resource_type_filter.py",
     "classname": "ResourceTypeFilter",
-    "type": "resource-type-filter",
+    "type": "resource-type-filter-type",
     "componentpath": "views/components/search/resource-type-filter",
     "componentname": "resource-type-filter",
-    "sortorder": "0",
-    "enabled": True,
+    "config": {},
 }
 
 
 def get_permitted_graphids(permitted_nodegroups):
     permitted_graphids = set()
+
     for node in Node.objects.filter(nodegroup__in=permitted_nodegroups):
         permitted_graphids.add(str(node.graph_id))
-    return permitted_graphids
+
+    permitted_and_published_graphids = set(
+        str(graphid)
+        for graphid in GraphModel.objects.filter(graphid__in=permitted_graphids)
+        .exclude(is_active=False)
+        .values_list("graphid", flat=True)
+    )
+
+    return permitted_and_published_graphids
 
 
 class ResourceTypeFilter(BaseSearchFilter):
-    def append_dsl(self, search_results_object, permitted_nodegroups, include_provisional):
+    def append_dsl(self, search_query_object, **kwargs):
+        permitted_nodegroups = kwargs.get("permitted_nodegroups")
         search_query = Bool()
-        querystring_params = self.request.GET.get(details["componentname"], "")
+        querystring_params = kwargs.get("querystring", "[]")
         graph_ids = []
         permitted_graphids = get_permitted_graphids(permitted_nodegroups)
 
@@ -50,7 +59,15 @@ class ResourceTypeFilter(BaseSearchFilter):
 
         search_query.filter(terms)
 
-        search_results_object["query"].add_query(search_query)
+        search_query_object["query"].add_query(search_query)
 
     def view_data(self):
-        return {"resources": get_resource_types_by_perm(self.request.user, "read_nodegroup")}
+        return {
+            "resources": list(
+                GraphModel.objects.filter(
+                    graphid__in=get_resource_types_by_perm(
+                        self.request.user, "read_nodegroup"
+                    )
+                )
+            )
+        }

@@ -1,0 +1,194 @@
+import io
+import os
+import shutil
+import textwrap
+import uuid
+from http import HTTPStatus
+from pathlib import Path
+
+from arches.app.etl_modules.jsonld_importer import JSONLDImporter
+from arches.app.models.models import (
+    EditLog,
+    ETLModule,
+    GraphModel,
+    LoadEvent,
+    Node,
+    ResourceInstance,
+    TileModel,
+)
+from arches.app.models.system_settings import settings
+from arches.app.utils.betterJSONSerializer import JSONDeserializer
+from arches.app.utils.data_management.resource_graphs.importer import (
+    import_graph as ResourceGraphImporter,
+)
+from arches.app.utils.i18n import LanguageSynchronizer
+from arches.app.utils.skos import SKOSReader
+from tests.base_test import ArchesTestCase
+
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.core.files.storage import default_storage
+from django.http import HttpRequest
+from django.urls import reverse
+from django.test import TransactionTestCase
+from django.test.client import Client
+
+# these tests can be run from the command line via
+# python manage.py test tests.bulkdata.jsonld_import_tests --settings="tests.test_settings"
+
+
+class JSONLDImportTests(TransactionTestCase):
+    """
+    Subclass TransactionTestCase because
+    the functionality under test in the etl modules uses a raw cursor to
+    disable triggers in the tiles table, which blows up using TestCase.
+    (Cannot simply ALTER TABLE during a transaction...)
+    """
+
+    serialized_rollback = True
+
+    def setUp(self):
+        """setUpClass doesn't work because the rollback fixture is applied after that."""
+        ArchesTestCase.loadOntology()
+        LanguageSynchronizer.synchronize_settings_with_db()
+
+        skos = SKOSReader()
+        rdf = skos.read_file("tests/fixtures/jsonld_base/rdm/jsonld_test_thesaurus.xml")
+        skos.save_concepts_from_skos(rdf)
+
+        skos = SKOSReader()
+        rdf = skos.read_file(
+            "tests/fixtures/jsonld_base/rdm/jsonld_test_collections.xml"
+        )
+        skos.save_concepts_from_skos(rdf)
+
+        with open(
+            os.path.join("tests/fixtures/jsonld_base/models/test_1_basic_object.json"),
+            "r",
+        ) as f:
+            archesfile = JSONDeserializer().deserialize(f)
+        ResourceGraphImporter(archesfile["graph"])
+
+        self.basic_graph = GraphModel.objects.get(slug="basic", source_identifier=None)
+        self.basic_resource_1 = ResourceInstance.objects.create(
+            pk=uuid.UUID("58da1c67-187e-460e-a94f-6b45f9cbc219"),
+            graph=self.basic_graph,
+        )
+        self.note_node = Node.objects.get(pk="cdfc22b2-f6b5-11e9-8f09-a4d18cec433a")
+        tile = TileModel(
+            nodegroup_id=self.note_node.nodegroup.pk,
+            data={
+                str(self.note_node.pk): {
+                    "en": {
+                        "direction": "ltr",
+                        "value": "Test value",
+                    },
+                },
+            },
+        )
+        self.basic_resource_1.tilemodel_set.add(tile, bulk=False)
+        self.basic_resource_1_as_jsonld_bytes = (
+            Client().get(reverse("resources", args=[self.basic_resource_1.pk])).content
+        )
+
+        self.write_zip_file_to_uploaded_files()
+
+    def write_zip_file_to_uploaded_files(self):
+        basic_resource_1_dest = (
+            Path(settings.UPLOADED_FILES_DIR)
+            / "testzip"
+            / "basic"
+            / "58"
+            / f"{self.basic_resource_1.pk}.json"
+        )
+        default_storage.save(
+            basic_resource_1_dest, io.BytesIO(self.basic_resource_1_as_jsonld_bytes)
+        )
+        self.dir_to_zip = (
+            Path(default_storage.location)
+            / default_storage.location
+            / Path(settings.UPLOADED_FILES_DIR)
+            / "testzip"
+        )
+        zip_dest = Path(self.dir_to_zip.parent) / "test-jsonld-import"
+        self.addCleanup(shutil.rmtree, self.dir_to_zip)
+        self.uploaded_zip_location = shutil.make_archive(
+            zip_dest, "zip", root_dir=self.dir_to_zip.parent, base_dir=self.dir_to_zip
+        )
+        self.addCleanup(os.unlink, self.uploaded_zip_location)
+
+        self.module = ETLModule.objects.get(slug="jsonld-importer")
+
+    def test_read_validates_graph_exists(self):
+        self.client.login(username="admin", password="admin")
+        start_event = LoadEvent.objects.create(
+            user_id=1, etl_module=self.module, status="running"
+        )
+
+        self.basic_resource_1.delete()
+        self.basic_graph.delete()
+
+        with (
+            open(self.uploaded_zip_location, "rb") as f,
+            self.assertLogs("django.request", level="WARNING"),
+        ):
+            response = self.client.post(
+                reverse("etl_manager"),
+                data={
+                    "action": "read",
+                    "load_id": str(start_event.pk),
+                    "module": str(self.module.pk),
+                    "file": f,
+                },
+            )
+
+        self.assertContains(
+            response,
+            'The model \\"basic\\" does not exist.',
+            status_code=HTTPStatus.NOT_FOUND,
+        )
+
+    def test_write(self):
+        request = HttpRequest()
+        request.method = "POST"
+        request.user = User.objects.get(username="admin")
+
+        start_event = LoadEvent.objects.create(
+            user=request.user, etl_module=self.module, status="running"
+        )
+        request.POST["load_id"] = str(start_event.pk)
+        request.POST["module"] = str(self.module.pk)
+
+        # Mock a read() operation
+        request.POST.__setitem__(
+            "load_details",
+            textwrap.dedent(
+                """
+            {"result":
+                {"summary":
+                    {"cumulative_files_size":255,
+                        "files":
+                            {"testzip/basic/58/58da1c67-187e-460e-a94f-6b45f9cbc219.json":
+                                {"size":"255.00 bytes"}
+                            },
+                        "name":"testzip.zip",
+                        "size":"1006.00 bytes"
+                    }
+                }
+            }
+            """
+            ),
+        )
+        importer = JSONLDImporter(request=request)
+        importer.prepare_temp_dir(request)  # ordinarily done with the .read() request
+
+        # Do a hack job of a read.
+        # This just copies the before-compressed json at uploadedfiles/testzip/basic/58/...
+        # to uploadedfiles/tmp/basic/58/...
+        shutil.copytree(self.dir_to_zip, default_storage.path(Path(importer.temp_dir)))
+
+        importer.write(request)
+
+        self.assertEqual(
+            EditLog.objects.filter(transactionid=start_event.pk).count(), 2
+        )

@@ -19,7 +19,11 @@ class SetAnonymousUser(MiddlewareMixin):
         # used for all OAuth resourse requests
         if request.path != reverse("oauth2:authorize") and request.user.is_anonymous:
             try:
-                request.user = User.objects.get(username="anonymous")
+                request.user = (
+                    User.objects.filter(username="anonymous")
+                    .select_related("userprofile")
+                    .get()
+                )
             except Exception:
                 pass
 
@@ -30,7 +34,9 @@ class ModifyAuthorizationHeader(MiddlewareMixin):
         # HTTP_AUTHORIZATION header. So, if the request has the alternate
         # HTTP_X_AUTHORIZATION header, update the request to use the standard
         if request.META.get("HTTP_X_AUTHORIZATION", None) is not None:
-            request.META["HTTP_AUTHORIZATION"] = request.META.get("HTTP_X_AUTHORIZATION")
+            request.META["HTTP_AUTHORIZATION"] = request.META.get(
+                "HTTP_X_AUTHORIZATION"
+            )
             del request.META["HTTP_X_AUTHORIZATION"]
 
 

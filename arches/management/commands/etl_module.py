@@ -17,8 +17,8 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
 import uuid
-from arches.app.models import models
 from django.core.management.base import BaseCommand
+from arches.app.models.models import ETLModule
 from arches.app.utils import module_importer
 
 
@@ -31,9 +31,23 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("operation", nargs="?")
 
-        parser.add_argument("-s", "--source", action="store", dest="source", default="", help="Extension file to be loaded")
+        parser.add_argument(
+            "-s",
+            "--source",
+            action="store",
+            dest="source",
+            default="",
+            help="Extension file to be loaded",
+        )
 
-        parser.add_argument("-n", "--name", action="store", dest="name", default="", help="The name of the extension to unregister")
+        parser.add_argument(
+            "-n",
+            "--name",
+            action="store",
+            dest="name",
+            default="",
+            help="The name of the extension to unregister",
+        )
 
     def handle(self, *args, **options):
         if options["operation"] == "register":
@@ -65,7 +79,7 @@ class Command(BaseCommand):
         except:
             details["etlmoduleid"] = str(uuid.uuid4())
 
-        etl_module = models.ETLModule(**details)
+        etl_module = ETLModule(**details)
         etl_module.save()
 
     def unregister(self, name):
@@ -74,7 +88,7 @@ class Command(BaseCommand):
 
         """
         try:
-            etl_module = models.ETLModule.objects.filter(name=name)
+            etl_module = ETLModule.objects.filter(name=name)
             etl_module[0].delete()
         except Exception as e:
             print(e)
@@ -85,7 +99,7 @@ class Command(BaseCommand):
 
         """
         try:
-            etl_modules = models.ETLModule.objects.all()
+            etl_modules = ETLModule.objects.all()
             for etl_module in etl_modules:
                 print(etl_module.name)
         except Exception as e:

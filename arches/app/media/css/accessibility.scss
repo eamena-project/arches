@@ -99,7 +99,7 @@ a, button {
 .sidenav-sm {
 	.sidenav-menu {
 		.active-sub {
-			a {
+			a:not(.collapse .link-submenu-item .link-submenu) {
 				background-color: $leftnav-active;
                 &:after {
 					display: inline-block;
@@ -186,6 +186,12 @@ embed:focus-visible,
 .overlay-listing,
 .legend-listing {
     color: $map-filter-inactive-option;
+}
+
+// Tabbed reports
+.report-tab.active,
+.tab-banner {
+    background: #1E5A8F;
 }
 
 ///////////// Index page specific styles /////////////

@@ -16,15 +16,25 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
+import logging
+
 from django import forms
-from django.contrib.auth.forms import UserCreationForm, PasswordResetForm, SetPasswordForm, UserChangeForm
+from django.contrib.auth.forms import (
+    UserCreationForm,
+    PasswordResetForm,
+    SetPasswordForm,
+    UserChangeForm,
+)
 from django.contrib.auth.models import User
 from django.db import transaction
-from django.forms.widgets import PasswordInput, TextInput
 from django.utils.translation import gettext as _
 from arches.app.models import models
-from captcha.fields import ReCaptchaField
-import logging
+
+# Allow arches apps to depend on django_recaptcha (Django 5.2) or captcha (Django 4.2)
+try:
+    from django_recaptcha.fields import ReCaptchaField
+except ImportError:
+    from captcha.fields import ReCaptchaField
 
 
 class ArchesUserCreationForm(UserCreationForm):
@@ -106,11 +116,27 @@ class ArchesUserProfileForm(UserChangeForm):
 
 
 class ArchesPasswordResetForm(PasswordResetForm):
-    email = forms.CharField(widget=forms.EmailInput(attrs={"class": "form-control input-lg floating-label-input", "required": "required"}))
+    email = forms.CharField(
+        widget=forms.EmailInput(
+            attrs={
+                "class": "form-control input-lg floating-label-input",
+                "required": "required",
+            }
+        )
+    )
 
 
 class ArchesSetPasswordForm(SetPasswordForm):
-    new_password1 = forms.CharField(widget=forms.PasswordInput(attrs={"placeholder": _("New password"), "class": "form-control input-lg"}))
+    new_password1 = forms.CharField(
+        widget=forms.PasswordInput(
+            attrs={"placeholder": _("New password"), "class": "form-control input-lg"}
+        )
+    )
     new_password2 = forms.CharField(
-        widget=forms.PasswordInput(attrs={"placeholder": _("Re-enter new password"), "class": "form-control input-lg"})
+        widget=forms.PasswordInput(
+            attrs={
+                "placeholder": _("Re-enter new password"),
+                "class": "form-control input-lg",
+            }
+        )
     )

@@ -19,27 +19,33 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 import os
 import json
 import csv
-from arches.app.utils.data_management.resources.formats.csvfile import CsvWriter, MissingConfigException
-from arches.app.utils.i18n import LanguageSynchronizer
+from django.test.utils import captured_stdout
+from arches.app.utils.data_management.resources.formats.csvfile import (
+    CsvWriter,
+    MissingConfigException,
+)
 from operator import itemgetter
 from tests.base_test import ArchesTestCase
 from arches.app.utils.skos import SKOSReader
 from arches.app.utils.betterJSONSerializer import JSONDeserializer
 from arches.app.utils.data_management.resources.importer import BusinessDataImporter
-from arches.app.utils.data_management.resources.exporter import ResourceExporter as BusinessDataExporter
-from arches.app.utils.data_management.resource_graphs.importer import import_graph as ResourceGraphImporter
+from arches.app.utils.data_management.resources.exporter import (
+    ResourceExporter as BusinessDataExporter,
+)
+from arches.app.utils.data_management.resource_graphs.importer import (
+    import_graph as ResourceGraphImporter,
+)
 
 
 # these tests can be run from the command line via
-# python manage.py test tests/exporter/resource_export_tests.py --pattern="*.py" --settings="tests.test_settings"
+# python manage.py test tests.exporter.resource_export_tests --settings="tests.test_settings"
 
 
 class BusinessDataExportTests(ArchesTestCase):
     @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
+    def setUpTestData(cls):
+        super().setUpTestData()
 
-        cls.loadOntology()
         skos = SKOSReader()
         rdf = skos.read_file("tests/fixtures/data/concept_label_test_scheme.xml")
         ret = skos.save_concepts_from_skos(rdf)
@@ -48,9 +54,11 @@ class BusinessDataExportTests(ArchesTestCase):
         rdf = skos.read_file("tests/fixtures/data/concept_label_test_collection.xml")
         ret = skos.save_concepts_from_skos(rdf)
 
-        with open(os.path.join("tests/fixtures/resource_graphs/resource_export_test.json"), "r") as f:
+        with open(
+            os.path.join("tests/fixtures/resource_graphs/resource_export_test.json"),
+            "r",
+        ) as f:
             archesfile = JSONDeserializer().deserialize(f)
-        LanguageSynchronizer.synchronize_settings_with_db()
         ResourceGraphImporter(archesfile["graph"])
 
     def test_invalid_writer_config(self):
@@ -58,15 +66,29 @@ class BusinessDataExportTests(ArchesTestCase):
             CsvWriter()
 
     def test_csv_export(self):
-        BusinessDataImporter("tests/fixtures/data/csv/resource_export_test.csv").import_business_data()
+        with captured_stdout():
+            BusinessDataImporter(
+                "tests/fixtures/data/csv/resource_export_test.csv"
+            ).import_business_data()
 
-        export = BusinessDataExporter("csv", configs="tests/fixtures/data/csv/resource_export_test.mapping", single_file=True).export(
-            languages="en"
-        )
+        export = BusinessDataExporter(
+            "csv",
+            configs="tests/fixtures/data/csv/resource_export_test.mapping",
+            single_file=True,
+        ).export(languages="en")
 
-        csv_output = list(csv.DictReader(export[0]["outputfile"].getvalue().split("\r\n")))[0]
+        csv_output = list(
+            csv.DictReader(export[0]["outputfile"].getvalue().split("\r\n"))
+        )[0]
         csvinputfile = "tests/fixtures/data/csv/resource_export_test.csv"
-        csv_input = list(csv.DictReader(open(csvinputfile, "r", encoding="utf-8"), restkey="ADDITIONAL", restval="MISSING"))[0]
+        with open(csvinputfile, "r", encoding="utf-8") as f:
+            csv_input = list(
+                csv.DictReader(
+                    f,
+                    restkey="ADDITIONAL",
+                    restval="MISSING",
+                )
+            )[0]
 
         self.assertDictEqual(dict(csv_input), dict(csv_output))
 
@@ -86,25 +108,45 @@ class BusinessDataExportTests(ArchesTestCase):
                 new_list = []
                 for val in obj:
                     new_list.append(deep_sort(val))
-                try:
-                    _sorted = sorted(new_list, key=itemgetter("tileid"))
-                except:
-                    _sorted = new_list
+                if all(
+                    isinstance(item, dict) and "resourceinstance" in item
+                    for item in new_list
+                ):
+                    _sorted = sorted(
+                        new_list,
+                        key=lambda item: item["resourceinstance"]["resourceinstanceid"],
+                    )
+                else:
+                    try:
+                        _sorted = sorted(new_list, key=itemgetter("tileid"))
+                    except:
+                        _sorted = new_list
 
             else:
                 _sorted = obj
 
             return _sorted
 
-        BusinessDataImporter("tests/fixtures/data/json/resource_export_business_data_truth.json").import_business_data()
-        export = BusinessDataExporter("json").export("ab74af76-fa0e-11e6-9e3e-026d961c88e6")
+        with captured_stdout():
+            BusinessDataImporter(
+                "tests/fixtures/data/json/resource_export_business_data_truth.json"
+            ).import_business_data()
+        export = BusinessDataExporter("json").export(
+            "ab74af76-fa0e-11e6-9e3e-026d961c88e6"
+        )
 
         json_export = deep_sort(json.loads(export[0]["outputfile"].getvalue()))
-        json_truth = deep_sort(json.load(open("tests/fixtures/data/json/resource_export_business_data_truth.json")))
+        with open(
+            "tests/fixtures/data/json/resource_export_business_data_truth.json"
+        ) as f:
+            json_truth = deep_sort(json.load(f))
 
-        # removes generated graph_publication_id
-        for resource_data in json_export["business_data"]["resources"]:
-            if resource_data["resourceinstance"]["graph_publication_id"]:
-                del resource_data["resourceinstance"]["graph_publication_id"]
+        self.maxDiff = None
+
+        # removes dynamic value "createdtime" from export to compare with static truth value
+        for resource in json_export["business_data"]["resources"]:
+            instance = resource["resourceinstance"]
+            if "createdtime" in instance:
+                del instance["createdtime"]
 
         self.assertDictEqual(json_export, json_truth)

@@ -1,6 +1,6 @@
 from arches.app.search.components.base import BaseSearchFilter
-from arches.app.search.elasticsearch_dsl_builder import Nested
 from django.utils.translation import get_language
+from arches.app.models.models import SearchComponent
 
 details = {
     "searchcomponentid": "6a2fe122-de54-4e44-8e93-b6a0cda7955c",
@@ -8,20 +8,39 @@ details = {
     "icon": "",
     "modulename": "sort_results.py",
     "classname": "SortResults",
-    "type": "",
+    "type": "sort-results-type",
     "componentpath": "views/components/search/sort-results",
     "componentname": "sort-results",
-    "sortorder": "0",
-    "enabled": True,
+    "config": {},
 }
 
 
 class SortResults(BaseSearchFilter):
-    def append_dsl(self, search_results_object, permitted_nodegroups, include_provisional):
-        sort_param = self.request.GET.get(details["componentname"], None)
+    def append_dsl(self, search_query_object, **kwargs):
 
-        if sort_param is not None and sort_param is not "":
-            search_results_object["query"].sort(
-                field="displayname.value",
-                dsl={"order": sort_param, "nested": {"path": "displayname", "filter": {"term": {"displayname.language": get_language()}}}},
-            )
+        query_string = kwargs["querystring"]
+        try:
+            sort_order = query_string["sort_order"]
+            sort_by = query_string["sort_by"]
+        except TypeError:  # sort order is a string e.g. 'asc'
+            sort_order = query_string
+            sort_by = "resource_name"
+
+        if sort_by == "resource_name":
+            sort_field = "displayname.value"
+            sort_dsl = {
+                "nested": {
+                    "path": "displayname",
+                    "filter": {"term": {"displayname.language": get_language()}},
+                },
+                "order": sort_order,
+            }
+
+        else:
+            sort_field = sort_by
+            sort_dsl = {"order": sort_order}
+
+        search_query_object["query"].sort(
+            field=sort_field,
+            dsl=sort_dsl,
+        )

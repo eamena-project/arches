@@ -16,44 +16,30 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
-"""
-This file demonstrates writing tests using the unittest module. These will pass
-when you run "manage.py test".
-
-Replace this with more appropriate tests for your application.
-"""
-
 import os
-import uuid
-from tests import test_settings
-from django.test import TestCase
-from django.core import management
+from pathlib import Path
+from unittest import mock
+
+from django.test.utils import captured_stdout
+from django.conf import settings
+from django.core.management import call_command
 from arches.app.models import models
-from django.urls import reverse
-from arches.app.utils.betterJSONSerializer import JSONSerializer, JSONDeserializer
-from django.test.client import Client
+from tests.base_test import ArchesTestCase
 
 # these tests can be run from the command line via
-# python manage.py test tests/views/command_line_tests.py --pattern="*.py" --settings="tests.test_settings"
+# python manage.py test tests.views.command_line_tests --settings="tests.test_settings"
 
 
-class CommandLineTests(TestCase):
-    def setUp(self):
-        self.expected_resource_count = 2
-        self.data_type_graphid = "330802c5-95bd-11e8-b7ac-acde48001122"
-        self.client = Client()
-
-    def tearDown(self):
-        models.ResourceInstance.objects.filter(graph_id=self.data_type_graphid).delete()
+class CommandLineTests(ArchesTestCase):
+    data_type_graphid = "330802c5-95bd-11e8-b7ac-acde48001122"
 
     @classmethod
-    def setUpClass(cls):
-        # TODO: pull this up higher so that it's not depending on running outside a transaction
-        test_pkg_path = os.path.join(test_settings.TEST_ROOT, "fixtures", "testing_prj", "testing_prj", "pkg")
-        management.call_command("packages", operation="load_package", source=test_pkg_path, yes=True)
-
-        super().setUpClass()
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.legacy_load_testing_package()
 
     def test_load_package(self):
-        resources = models.ResourceInstance.objects.filter(graph_id=self.data_type_graphid)
-        self.assertEqual(len(list(resources)), self.expected_resource_count)
+        resources = models.ResourceInstance.objects.filter(
+            graph_id=self.data_type_graphid
+        )
+        self.assertEqual(len(resources), 2)
